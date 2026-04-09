@@ -1,0 +1,6 @@
+# Intentionally empty.
+# This file overrides web/.gitignore for npm publish, so that web/dist
+# (listed in the root package.json `files` field) gets included in the
+# published tarball. Without this file, npm falls back to .gitignore,
+# which excludes dist/ from version control but should NOT exclude it
+# from the npm package.

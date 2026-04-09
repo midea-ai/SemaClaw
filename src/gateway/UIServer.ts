@@ -47,7 +47,13 @@ export class UIServer {
 
   constructor(private readonly agentPool: AgentPool, opts?: { port?: number }) {
     this.port    = opts?.port ?? parseInt(process.env.GATEWAY_UI_PORT ?? '18788', 10);
-    this.distDir = path.join(process.cwd(), 'web', 'dist');
+    // Resolve web/dist relative to the package install location.
+    // __dirname at runtime points to <pkg>/dist/gateway, so the bundled
+    // web/dist sits at ../../web/dist. Falls back to cwd-based path for
+    // local development where the package may not yet be built/installed.
+    const packagedDist = path.resolve(__dirname, '..', '..', 'web', 'dist');
+    const cwdDist      = path.join(process.cwd(), 'web', 'dist');
+    this.distDir = fs.existsSync(packagedDist) ? packagedDist : cwdDist;
 
     this.server = http.createServer((req, res) => {
       this.handle(req, res).catch((err) => {

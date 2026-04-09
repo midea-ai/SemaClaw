@@ -36,6 +36,22 @@ SemaClaw is a general-purpose engineering harness for building personal AI agent
 
 ## Quick Start
 
+### Option A — Install from npm (recommended)
+
+```bash
+# 1. Install globally
+npm install -g semaclaw
+
+# 2. Run
+semaclaw
+```
+
+That's it. Open the Web UI at **<http://127.0.0.1:18788/>**.
+
+To enable messaging channels (Telegram / Feishu / QQ / WeChat), create a `.env` file in your working directory before starting `semaclaw`. See [docs/QUICK_START.md](docs/QUICK_START.md) for the full list of environment variables.
+
+### Option B — Build from source
+
 ```bash
 # 1. Clone
 git clone https://github.com/midea-ai/SemaClaw.git
@@ -48,7 +64,7 @@ npm run build:web
 
 # 3. Configure (optional)
 cp .env.example .env
-# Edit .env to enable channels (Telegram / Feishu / QQ / Wechat).
+# Edit .env to enable channels (Telegram / Feishu / QQ / WeChat).
 # If left unset, SemaClaw starts in Web UI–only mode.
 
 # 4. Run

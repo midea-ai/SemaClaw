@@ -36,6 +36,22 @@ SemaClaw 是一个面向个人 AI Agent 的通用工程，构建在可复用的 
 
 ## 快速开始
 
+### 方式 A —— 从 npm 安装（推荐）
+
+```bash
+# 1. 全局安装
+npm install -g semaclaw
+
+# 2. 启动
+semaclaw
+```
+
+就这么简单。在浏览器打开 Web UI：**<http://127.0.0.1:18788/>**。
+
+如需启用消息频道（Telegram / 飞书 / QQ / 微信），在启动 `semaclaw` 之前，在当前工作目录创建 `.env` 文件即可。完整环境变量列表请参考 [docs/QUICK_START.md](docs/QUICK_START.md)。
+
+### 方式 B —— 从源码构建
+
 ```bash
 # 1. 克隆
 git clone https://github.com/midea-ai/SemaClaw.git
