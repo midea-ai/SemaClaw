@@ -48,6 +48,8 @@ semaclaw
 
 That's it. Open the Web UI at **<http://127.0.0.1:18788/>**.
 
+> **Configure an LLM on first launch.** SemaClaw starts without a built-in model. Open the Web UI → **Settings → LLM**, add a provider profile (OpenAI / Anthropic / DeepSeek / Qwen / …) with `baseURL`, `apiKey`, `modelName`. The profile is persisted to `~/.semaclaw/config.json` and synced to `~/.semaclaw/semaclaw-model.conf` — until at least one active profile exists, agent runs that call an LLM will fail.
+
 To enable messaging channels (Telegram / Feishu / QQ / WeChat), create a `.env` file in your working directory before starting `semaclaw`. See [docs/QUICK_START.md](docs/QUICK_START.md) for the full list of environment variables.
 
 ### Option B — Build from source
@@ -71,7 +73,7 @@ cp .env.example .env
 npm start
 ```
 
-Once started, open the Web UI at **<http://127.0.0.1:18788/>**.
+Once started, open the Web UI at **<http://127.0.0.1:18788/>**, then go to **Settings → LLM** and add at least one active provider profile (see the note in Option A).
 
 For a complete walkthrough including environment variables, CLI usage, runtime layout, and architecture details, see **[docs/QUICK_START.md](docs/QUICK_START.md)** *(currently in Chinese)*.
 

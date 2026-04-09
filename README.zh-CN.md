@@ -48,6 +48,8 @@ semaclaw
 
 就这么简单。在浏览器打开 Web UI：**<http://127.0.0.1:18788/>**。
 
+> **首次启动需配置 LLM。** SemaClaw 不内置任何模型。打开 Web UI → **设置 → LLM**，添加一个 provider profile（OpenAI / Anthropic / DeepSeek / Qwen / ……），填写 `baseURL`、`apiKey`、`modelName` 。配置会持久化到 `~/.semaclaw/config.json`，并同步写入 `~/.semaclaw/semaclaw-model.conf`。在至少有一个 active profile 之前，任何调用 LLM 的 Agent 运行都会失败。
+
 如需启用消息频道（Telegram / 飞书 / QQ / 微信），在启动 `semaclaw` 之前，在当前工作目录创建 `.env` 文件即可。完整环境变量列表请参考 [docs/QUICK_START.md](docs/QUICK_START.md)。
 
 ### 方式 B —— 从源码构建
@@ -71,7 +73,7 @@ cp .env.example .env
 npm start
 ```
 
-启动后，在浏览器打开 Web UI：**<http://127.0.0.1:18788/>**。
+启动后，在浏览器打开 Web UI：**<http://127.0.0.1:18788/>**，然后进入 **设置 → LLM** 至少添加一个 active 的 provider profile（参见方式 A 中的说明）。
 
 完整使用说明（环境变量、CLI 命令、运行时目录布局、架构细节）请参考 **[docs/QUICK_START.md](docs/QUICK_START.md)**。
 
