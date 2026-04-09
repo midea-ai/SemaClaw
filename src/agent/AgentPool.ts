@@ -124,6 +124,8 @@ export class AgentPool {
   private dispatchExecuting = new Set<string>();
   /** jid → 最后一条 agent 回复（供 dispatch fallback 通知使用） */
   private lastDispatchReplies = new Map<string, string>();
+  /** jid → 当前正在执行的 dispatch taskId（由 DispatchBridge 通过 sendToAgent 传入） */
+  private dispatchTaskMap = new Map<string, string>();
   /** jid → processAndWait 的中止回调（destroy 时触发，打断挂起的 Promise） */
   private activeAborts = new Map<string, (reason: string) => void>();
   /** jid → bindEvents/PermissionBridge 注册的持久监听器清理函数 */
@@ -323,17 +325,35 @@ export class AgentPool {
     this.dispatchExecuting.delete(jid);
   }
 
+  /** 记录当前 agent 正在执行的 dispatch taskId（由 DispatchBridge sendToAgent 回调注入） */
+  setCurrentDispatchTaskId(jid: string, taskId: string): void {
+    this.dispatchTaskMap.set(jid, taskId);
+  }
+
   /**
    * Fallback：dispatch task 的 processAndWait 完成后调用。
-   * 如果 idle 事件中的 notifyReply 因时序问题未触发（processingMap 仍有记录），
+   * 如果 idle 事件中的 notifyTaskDone 因时序问题未触发，
    * 在此处补发通知，确保 dispatch 状态文件被正确更新。
+   * @param expectedTaskId 由 sendToAgent 闭包捕获的 taskId，防止竞态时消费下一个任务的回复
    */
-  notifyDispatchIfPending(jid: string): void {
+  notifyDispatchIfPending(jid: string, expectedTaskId?: string): void {
     const content = this.lastDispatchReplies.get(jid);
-    if (content) {
+    if (!content) return; // idle 事件已处理，无需 fallback
+    const currentTaskId = this.dispatchTaskMap.get(jid);
+    // 如果 dispatchTaskMap 已被下一个任务覆盖（currentTaskId !== expectedTaskId），
+    // 说明 idle 事件已处理了当前任务，且新任务已启动——跳过，避免错误消费新任务的回复
+    if (expectedTaskId && currentTaskId && currentTaskId !== expectedTaskId) return;
+    const taskId = expectedTaskId ?? currentTaskId;
+    if (taskId) {
+      this.dispatchBridge?.notifyTaskDone(taskId, content);
+      if (this.dispatchTaskMap.get(jid) === taskId) {
+        this.dispatchTaskMap.delete(jid);
+      }
+    } else {
+      // taskId 未知，尝试兼容桥接
       this.dispatchBridge?.notifyReply(jid, content);
-      // notifyReply 内部通过 processingMap 判断是否有效——已处理过则自动跳过
     }
+    this.lastDispatchReplies.delete(jid);
   }
 
   revertDispatchWorkspace(jid: string): void {
@@ -709,7 +729,7 @@ export class AgentPool {
           core.off('session:error', onSessionError);
           // 销毁超时的 Agent，下次重建
           this.destroy(jid).catch(() => {});
-          // 无条件通知 DispatchBridge（notifyError 内部通过 processingMap 过滤非 dispatch 调用）
+          // 无条件通知 DispatchBridge（notifyError 内部通过 activeAgentTasks 过滤非 dispatch 调用）
           this.dispatchBridge?.notifyError(jid, 'Agent timeout');
           reject(new Error(`[AgentPool] Agent timeout for ${jid}`));
         }, AGENT_TIMEOUT_MS);
@@ -776,7 +796,7 @@ export class AgentPool {
           reject(new Error(`[AgentPool] Session error for ${jid}: [${data.error.code}] ${data.error.message}`));
         } else {
           this.destroy(jid).catch(() => {});
-          // 无条件通知 DispatchBridge（notifyError 内部通过 processingMap 过滤非 dispatch 调用）
+          // 无条件通知 DispatchBridge（notifyError 内部通过 activeAgentTasks 过滤非 dispatch 调用）
           this.dispatchBridge?.notifyError(jid, `[${data.error.code}] ${data.error.message}`);
           this.broadcastReply(jid, `❌ Session error [${data.error.code}]: ${data.error.message}\nSession has been reset.`, binding.botToken ?? undefined);
           reject(new Error(`[AgentPool] Session error for ${jid}: [${data.error.code}] ${data.error.message}`));
@@ -1056,6 +1076,8 @@ export class AgentPool {
     // 1. 若此 agent 正在执行某个 dispatch 子任务，将其标记为 error，
     //    避免该任务永久卡在 processing 状态（admin 的 dispatch_task MCP 会等到超时）。
     this.dispatchBridge?.notifyError(jid, 'Agent stopped by user');
+    this.dispatchTaskMap.delete(jid);
+    this.lastDispatchReplies.delete(jid);
 
     // 2. 若此 agent 是 admin，取消所有 active/queued parents，并 stop 被 dispatch 的子 agent。
     //    这样：(a) dispatch state 不残留孤立的 active parent 阻塞新 dispatch；
@@ -1150,10 +1172,11 @@ export class AgentPool {
 
     // 清理 dispatch 相关状态
     // 若此 agent 正在执行 dispatch 任务，主动通知 DispatchBridge 将其标记为 error，
-    // 避免任务永久卡在 processing 状态（processingMap 孤立条目 → parent 永不完成）。
-    // notifyError 内部通过 processingMap 判断是否有有效任务，无则自动跳过。
+    // 避免任务永久卡在 processing 状态（activeTasks 孤立条目 → parent 永不完成）。
+    // notifyError 内部通过 activeAgentTasks 判断是否有有效任务，无则自动跳过。
     this.dispatchBridge?.notifyError(jid, 'Agent destroyed');
     this.lastDispatchReplies.delete(jid);
+    this.dispatchTaskMap.delete(jid);
     this.dispatchExecuting.delete(jid);
     this.dispatchWorkspaceOverrides.delete(jid);
 
@@ -1282,9 +1305,26 @@ export class AgentPool {
     // 持久 state:update 监听 → WsGateway（与 processAndWait 临时监听互不干扰）
     const onStateUpdate = (data: StateUpdateData) => {
       this.agentEventSink?.notifyAgentState(binding.jid, data.state);
-      if (data.state === 'idle' && lastReplyContent && this.dispatchExecuting.has(binding.jid)) {
-        this.dispatchBridge?.notifyReply(binding.jid, lastReplyContent);
+      if (data.state === 'idle' && this.dispatchExecuting.has(binding.jid)) {
+        // dispatch 任务完成：agent 可能只有 tool_use 输出没有纯文本 message:complete，
+        // 此时 lastReplyContent 为空，但仍需通知 DispatchBridge 标记任务完成。
+        const replyText = lastReplyContent || this.lastDispatchReplies.get(binding.jid) || '';
+        const taskId = this.dispatchTaskMap.get(binding.jid);
+        if (taskId) {
+          this.dispatchBridge?.notifyTaskDone(taskId, replyText);
+          // notifyTaskDone → processNextPending → startTask 可能已同步写入下一个 taskId，
+          // 只有 dispatchTaskMap 仍指向当前 taskId 时才删除，避免误删下一个任务的 ID
+          if (this.dispatchTaskMap.get(binding.jid) === taskId) {
+            this.dispatchTaskMap.delete(binding.jid);
+          }
+        } else {
+          // fallback: taskId 未知时走兼容桥接
+          this.dispatchBridge?.notifyReply(binding.jid, replyText);
+        }
         lastReplyContent = '';
+        // 清除 lastDispatchReplies，防止 onCompleted 回调中的 notifyDispatchIfPending
+        // 用已消费的旧内容重复通知（会错误标记下一个任务为 done）
+        this.lastDispatchReplies.delete(binding.jid);
       }
     };
 

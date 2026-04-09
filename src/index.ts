@@ -364,12 +364,13 @@ async function main(): Promise<void> {
   // ===== 9. DispatchBridge =====
   const dispatchBridge = new DispatchBridge(
     config.paths.dispatchStatePath,
-    (jid, prompt, workspaceDir) => {
+    (jid, taskId, prompt, workspaceDir) => {
       agentPool.setDispatchWorkspace(jid, workspaceDir);
+      agentPool.setCurrentDispatchTaskId(jid, taskId);
       messageRouter.dispatchTask(jid, prompt, {
         onStarted: () => agentPool.markDispatchExecuting(jid),
         onCompleted: () => {
-          agentPool.notifyDispatchIfPending(jid);
+          agentPool.notifyDispatchIfPending(jid, taskId);
           agentPool.clearDispatchExecuting(jid);
         },
       });

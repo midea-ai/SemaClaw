@@ -83,8 +83,10 @@ const TERMINAL: TaskStatus[] = ['done', 'error', 'timeout'];
 // ===== DispatchBridge =====
 
 export class DispatchBridge {
-  /** jid → taskId（当前正在处理的任务） */
-  private processingMap = new Map<string, string>();
+  /** taskId → jid（主索引：精确追踪每个活跃任务） */
+  private activeTasks = new Map<string, string>();
+  /** jid → Set<taskId>（辅助索引：快速查询某 agent 名下所有活跃任务） */
+  private activeAgentTasks = new Map<string, Set<string>>();
   private pollInterval: ReturnType<typeof setInterval> | null = null;
   private cleanupInterval: ReturnType<typeof setInterval> | null = null;
   /**
@@ -106,9 +108,10 @@ export class DispatchBridge {
     private readonly statePath: string,
     /**
      * 由 index.ts 注入：设置子 agent 工作目录并将 augmented prompt 发给目标 agent。
+     * taskId 用于 AgentPool 在 idle 事件中精准匹配完成的任务。
      * workspaceDir 为空字符串时表示不切换（子 agent 保持自身目录）。
      */
-    private readonly sendToAgent: (jid: string, prompt: string, workspaceDir: string) => void,
+    private readonly sendToAgent: (jid: string, taskId: string, prompt: string, workspaceDir: string) => void,
     /** 由 index.ts 注入：dispatch task 全部完成后恢复子 agent 工作目录 */
     private readonly revertWorkspace: (jid: string) => void,
   ) {}
@@ -178,12 +181,41 @@ export class DispatchBridge {
     } catch { /* ignore */ }
   }
 
+  // ===== Active task tracking helpers =====
+
+  private addActiveTask(taskId: string, jid: string): void {
+    this.activeTasks.set(taskId, jid);
+    let set = this.activeAgentTasks.get(jid);
+    if (!set) { set = new Set(); this.activeAgentTasks.set(jid, set); }
+    set.add(taskId);
+  }
+
+  private removeActiveTask(taskId: string): string | undefined {
+    const jid = this.activeTasks.get(taskId);
+    if (!jid) return undefined;
+    this.activeTasks.delete(taskId);
+    const set = this.activeAgentTasks.get(jid);
+    if (set) {
+      set.delete(taskId);
+      if (set.size === 0) this.activeAgentTasks.delete(jid);
+    }
+    return jid;
+  }
+
+  /** 某 agent 当前是否还有活跃的 dispatch 任务 */
+  hasActiveTasks(jid: string): boolean {
+    const set = this.activeAgentTasks.get(jid);
+    return !!set && set.size > 0;
+  }
+
+  // ===== Task-centric completion notifications =====
+
   /**
-   * AgentPool.broadcastReply 调用：将对应 JID 的 processing 任务标记为 done。
+   * 将指定 taskId 的任务标记为 done（task-centric，精准匹配）。
    */
-  notifyReply(jid: string, text: string): void {
-    const taskId = this.processingMap.get(jid);
-    if (!taskId) return;
+  notifyTaskDone(taskId: string, text: string): void {
+    const jid = this.removeActiveTask(taskId);
+    if (!jid) return;
     const now = new Date().toISOString();
     let taskAdminFolder: string | null = null;
     let completedParentAdminFolder: string | null = null;
@@ -203,26 +235,51 @@ export class DispatchBridge {
         break;
       }
     });
-    this.processingMap.delete(jid);
     console.log(`[DispatchBridge] Task ${taskId} done for ${jid}`);
-    // 子任务完成 → 通知 admin agent 重置超时计时器
     if (taskAdminFolder) this.onAdminActivity?.(taskAdminFolder);
     if (completedParentAdminFolder) {
       this.activateNextQueued(completedParentAdminFolder);
     }
     this.processNextPending(jid);
-    if (!this.processingMap.has(jid)) {
+    if (!this.hasActiveTasks(jid)) {
       this.revertWorkspace(jid);
     }
   }
 
   /**
-   * Agent 错误/超时时由 AgentPool 调用：将对应 JID 的 processing 任务标记为 error。
-   * 非 dispatch 任务时 processingMap 中无记录，直接返回。
+   * 兼容桥接：AgentPool idle 事件只有 jid 时的 fallback。
+   * 取该 agent 名下最早 startedAt 的活跃任务进行匹配。
+   * Phase 2 完成后可移除。
    */
-  notifyError(jid: string, errorMessage: string): void {
-    const taskId = this.processingMap.get(jid);
-    if (!taskId) return;
+  notifyReply(jid: string, text: string): void {
+    const set = this.activeAgentTasks.get(jid);
+    if (!set || set.size === 0) return;
+    // 从 state 文件中找到该 jid 名下最早 startedAt 的 processing 任务
+    let earliestTaskId: string | null = null;
+    let earliestStartedAt: string | null = null;
+    try {
+      const state = this.readState();
+      for (const parent of state.parents) {
+        for (const task of parent.tasks) {
+          if (!set.has(task.id) || task.status !== 'processing') continue;
+          if (!earliestStartedAt || (task.startedAt && task.startedAt < earliestStartedAt)) {
+            earliestStartedAt = task.startedAt;
+            earliestTaskId = task.id;
+          }
+        }
+      }
+    } catch { /* ignore */ }
+    if (earliestTaskId) {
+      this.notifyTaskDone(earliestTaskId, text);
+    }
+  }
+
+  /**
+   * 将指定 taskId 的任务标记为 error（task-centric，精准匹配）。
+   */
+  notifyTaskError(taskId: string, errorMessage: string): void {
+    const jid = this.removeActiveTask(taskId);
+    if (!jid) return;
     const now = new Date().toISOString();
     let taskAdminFolder: string | null = null;
     let completedParentAdminFolder: string | null = null;
@@ -242,23 +299,48 @@ export class DispatchBridge {
         break;
       }
     });
-    this.processingMap.delete(jid);
     console.warn(`[DispatchBridge] Task ${taskId} error for ${jid}: ${errorMessage}`);
-    // 子任务出错 → 也通知 admin agent 重置超时计时器
     if (taskAdminFolder) this.onAdminActivity?.(taskAdminFolder);
     if (completedParentAdminFolder) {
       this.activateNextQueued(completedParentAdminFolder);
     }
     this.processNextPending(jid);
-    if (!this.processingMap.has(jid)) {
+    if (!this.hasActiveTasks(jid)) {
       this.revertWorkspace(jid);
+    }
+  }
+
+  /**
+   * 兼容桥接：Agent 错误/超时时由 AgentPool 调用（只有 jid）。
+   * 非 dispatch 任务时无记录，直接返回。
+   */
+  notifyError(jid: string, errorMessage: string): void {
+    const set = this.activeAgentTasks.get(jid);
+    if (!set || set.size === 0) return;
+    // 取该 jid 名下最早 startedAt 的 processing 任务
+    let earliestTaskId: string | null = null;
+    let earliestStartedAt: string | null = null;
+    try {
+      const state = this.readState();
+      for (const parent of state.parents) {
+        for (const task of parent.tasks) {
+          if (!set.has(task.id) || task.status !== 'processing') continue;
+          if (!earliestStartedAt || (task.startedAt && task.startedAt < earliestStartedAt)) {
+            earliestStartedAt = task.startedAt;
+            earliestTaskId = task.id;
+          }
+        }
+      }
+    } catch { /* ignore */ }
+    if (earliestTaskId) {
+      this.notifyTaskError(earliestTaskId, errorMessage);
     }
   }
 
   /**
    * admin agent stop 时调用：取消该 admin 所有 active/queued parents，
    * 将 processing/registered 子任务标记为 error，阻止后续调度。
-   * 返回当前正在执行（processingMap 中）的子 agent jid 列表，
+   * 返回当前正在执行的子 agent jid 列表，
    * 调用方需同步 stop 这些子 agent 以中止它们的 processAndWait。
    */
   cancelAdminParents(adminFolder: string): string[] {
@@ -271,7 +353,7 @@ export class DispatchBridge {
         for (const task of parent.tasks) {
           if (task.status === 'processing') {
             affectedJids.push(task.agentJid);
-            this.processingMap.delete(task.agentJid);
+            this.removeActiveTask(task.id);
             task.status = 'error';
             task.result = 'Cancelled: admin agent stopped';
             task.completedAt = now;
@@ -294,7 +376,7 @@ export class DispatchBridge {
 
   /**
    * admin agent pause 时调用：阻止 processPending 为该 admin 启动新任务。
-   * 返回当前正在执行（processingMap 中）的子 agent jid 列表，
+   * 返回当前正在执行的子 agent jid 列表，
    * 调用方可选择同步 pause 这些子 agent。
    */
   pauseAdmin(adminFolder: string): string[] {
@@ -306,7 +388,7 @@ export class DispatchBridge {
       for (const parent of state.parents) {
         if (parent.adminFolder !== adminFolder || parent.status !== 'active') continue;
         for (const task of parent.tasks) {
-          if (task.status === 'processing' && this.processingMap.has(task.agentJid)) {
+          if (task.status === 'processing' && this.activeTasks.has(task.id)) {
             childJids.push(task.agentJid);
           }
         }
@@ -369,13 +451,13 @@ export class DispatchBridge {
               }
             }
           });
-          this.processingMap.delete(task.agentJid);
+          this.removeActiveTask(task.id);
           console.warn(`[DispatchBridge] Task ${task.id} timed out`);
           if (completedAdminFolder) {
             this.activateNextQueued(completedAdminFolder);
           }
           this.processNextPending(task.agentJid);
-          if (!this.processingMap.has(task.agentJid)) {
+          if (!this.hasActiveTasks(task.agentJid)) {
             this.revertWorkspace(task.agentJid);
           }
         }
@@ -390,7 +472,7 @@ export class DispatchBridge {
       for (const task of parent.tasks) {
         if (
           task.status === 'registered' &&
-          !this.processingMap.has(task.agentJid) &&
+          !this.hasActiveTasks(task.agentJid) &&
           this.isReady(task, parent.tasks)
         ) {
           this.startTask(parent, task);
@@ -409,11 +491,11 @@ export class DispatchBridge {
       const state = this.readState();
       for (const parent of state.parents) {
         if (parent.status !== 'active') continue;
-        if (this.pausedAdmins.has(parent.adminFolder)) continue; // admin 已暂停，不启动新任务
+        if (this.pausedAdmins.has(parent.adminFolder)) continue;
         for (const task of parent.tasks) {
           if (
             task.status === 'registered' &&
-            !this.processingMap.has(task.agentJid) &&
+            !this.hasActiveTasks(task.agentJid) &&
             this.isReady(task, parent.tasks)
           ) {
             this.startTask(parent, task);
@@ -445,8 +527,10 @@ export class DispatchBridge {
         if (!dep) continue;
         ctx += `\n  <task label="${dep.label}" agent="${dep.agentId}" status="${dep.status}">`;
         ctx += `\n    <prompt>${dep.prompt}</prompt>`;
-        if (dep.status === 'done' && dep.result) {
-          ctx += `\n    <result>${dep.result}</result>`;
+        if (dep.status === 'done') {
+          ctx += dep.result
+            ? `\n    <result>${dep.result}</result>`
+            : `\n    <result>(task completed but produced no text output — the agent may have only used tools; check workspace for artifacts)</result>`;
         }
         ctx += '\n  </task>';
       }
@@ -460,8 +544,11 @@ export class DispatchBridge {
     if (others.length > 0) {
       ctx += '\n\n<other_tasks>';
       for (const o of others) {
-        if (o.status === 'done' && o.result) {
-          ctx += `\n  <task label="${o.label}" agent="${o.agentId}" status="done">${o.prompt}\n    <result>${o.result}</result>\n  </task>`;
+        if (o.status === 'done') {
+          const resultTag = o.result
+            ? `\n    <result>${o.result}</result>`
+            : `\n    <result>(completed, no text output)</result>`;
+          ctx += `\n  <task label="${o.label}" agent="${o.agentId}" status="done">${o.prompt}${resultTag}\n  </task>`;
         } else {
           ctx += `\n  <task label="${o.label}" agent="${o.agentId}" status="${o.status}">${o.prompt}</task>`;
         }
@@ -479,12 +566,13 @@ export class DispatchBridge {
         if (t) { t.status = 'processing'; t.startedAt = startedAt; t.timeoutAt = timeoutAt; }
       }
     });
-    this.processingMap.set(task.agentJid, task.id);
+    this.addActiveTask(task.id, task.agentJid);
     console.log(`[DispatchBridge] Starting ${task.id}(${task.label}) → ${task.agentJid}: "${task.prompt.slice(0, 50)}"`);
     try {
-      this.sendToAgent(task.agentJid, augmented, parent.sharedWorkspace ?? '');
+      this.sendToAgent(task.agentJid, task.id, augmented, parent.sharedWorkspace ?? '');
     } catch (err) {
       console.error(`[DispatchBridge] sendToAgent failed for ${task.agentJid}:`, err);
+      this.removeActiveTask(task.id);
       this.modifyState(state => {
         for (const p of state.parents) {
           const t = p.tasks.find(x => x.id === task.id);
@@ -495,8 +583,9 @@ export class DispatchBridge {
           }
         }
       });
-      this.processingMap.delete(task.agentJid);
-      this.revertWorkspace(task.agentJid);
+      if (!this.hasActiveTasks(task.agentJid)) {
+        this.revertWorkspace(task.agentJid);
+      }
     }
   }
 
