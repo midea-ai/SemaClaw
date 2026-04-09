@@ -1,6 +1,6 @@
 {
   "name": "semaclaw",
-  "version": "0.1.0-beta.3",
+  "version": "0.1.0",
   "description": "Multi-group AI gateway built on sema-code-core",
   "license": "MIT",
   "author": "AIRC Sema Team",
