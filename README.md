@@ -46,13 +46,16 @@ npm install
 npm run build
 npm run build:web
 
-# 3. Configure
+# 3. Configure (optional)
 cp .env.example .env
-# Edit .env — at minimum set TELEGRAM_BOT_TOKEN and ADMIN_TELEGRAM_USER_ID
+# Edit .env to enable channels (Telegram / Feishu / QQ / Wechat).
+# If left unset, SemaClaw starts in Web UI–only mode.
 
 # 4. Run
 npm start
 ```
+
+Once started, open the Web UI at **<http://127.0.0.1:18788/>**.
 
 For a complete walkthrough including environment variables, CLI usage, runtime layout, and architecture details, see **[docs/QUICK_START.md](docs/QUICK_START.md)** *(currently in Chinese)*.
 
