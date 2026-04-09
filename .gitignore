@@ -1,0 +1,48 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+*.tsbuildinfo
+coverage/
+
+# npm pack artifacts
+*.tgz
+
+# Environment & credentials
+.env
+.env.*
+!.env.example
+
+# Runtime data
+.sema/
+*.db
+*.sqlite
+*.sqlite3
+
+# IDE
+.vscode/
+.idea/
+.claude/
+
+# Editor temp files
+*.swp
+*.swo
+*~
+
+# Tool caches
+.npm/
+.eslintcache
+.cache/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+yarn-error.log
+
+# Local settings
+settings.local.json
