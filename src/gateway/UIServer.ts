@@ -11,7 +11,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import type { AgentPool } from '../agent/AgentPool';
-import { saveAdminPermissionsConfig, loadLLMConfigs, saveLLMConfig, removeLLMConfig, setActiveLLMConfig, type LLMConfig } from './GroupManager';
+import { saveAdminPermissionsConfig, loadLLMConfigs, saveLLMConfig, removeLLMConfig, setActiveLLMConfig, setActiveQuickLLMConfig, saveThinkingEnabled, type LLMConfig } from './GroupManager';
 import { getModelManager } from 'sema-core';
 import type { WikiManager } from '../wiki/WikiManager';
 import { readDisabledSkills, disableSkill, enableSkill } from '../skills/disabled.js';
@@ -168,8 +168,16 @@ export class UIServer {
         const semaProfile = (() => {
           try { return getModelManager().getModel('main'); } catch { return null; }
         })();
+        const semaQuickProfile = (() => {
+          try { return getModelManager().getModel('quick'); } catch { return null; }
+        })();
         res.writeHead(200, { 'Content-Type': 'application/json' }).end(
-          JSON.stringify({ ...stored, semaModel: semaProfile ? { modelName: semaProfile.modelName, provider: semaProfile.provider } : null })
+          JSON.stringify({
+            ...stored,
+            semaModel: semaProfile ? { modelName: semaProfile.modelName, provider: semaProfile.provider } : null,
+            semaQuickModel: semaQuickProfile ? { modelName: semaQuickProfile.modelName, provider: semaQuickProfile.provider } : null,
+            thinkingEnabled: this.agentPool.getThinkingEnabled(),
+          })
         );
         return;
       }
@@ -207,31 +215,59 @@ export class UIServer {
     if (urlPath === '/api/llm-config/active') {
       if (req.method === 'POST') {
         const body = await this.readBody(req);
-        const { id } = JSON.parse(body) as { id: string | null };
-        setActiveLLMConfig(id);
+        const { id, type = 'main' } = JSON.parse(body) as { id: string | null; type?: 'main' | 'quick' };
 
-        // 同步切换 sema-core 单例的 main 指针
-        if (id) {
-          const { configs } = loadLLMConfigs();
-          const cfg = configs.find(c => c.id === id);
-          if (cfg) {
-            try {
-              // 先 upsert profile（幂等），再切换指针
-              await getModelManager().addNewModel({
-                provider: cfg.provider, modelName: cfg.modelName,
-                baseURL: cfg.baseURL, apiKey: cfg.apiKey,
-                maxTokens: cfg.maxTokens, contextLength: cfg.contextLength,
-                adapt: cfg.adapt,
-              }, true);
-              await getModelManager().switchCurrentModel(`${cfg.modelName}[${cfg.provider}]`);
-              console.log(`[UIServer] Switched sema-core model to: ${cfg.modelName}[${cfg.provider}]`);
-            } catch (e) {
-              console.warn('[UIServer] switchCurrentModel failed:', e);
+        if (type === 'quick') {
+          // 设置快速模型
+          setActiveQuickLLMConfig(id);
+          if (id) {
+            const { configs, activeId: mainId } = loadLLMConfigs();
+            const cfg = configs.find(c => c.id === id);
+            if (cfg) {
+              try {
+                await getModelManager().addNewModel({
+                  provider: cfg.provider, modelName: cfg.modelName,
+                  baseURL: cfg.baseURL, apiKey: cfg.apiKey,
+                  maxTokens: cfg.maxTokens, contextLength: cfg.contextLength,
+                  adapt: cfg.adapt,
+                }, true);
+                // applyTaskModelConfig 同时更新 main + quick 指针
+                const mainCfg = configs.find(c => c.id === mainId);
+                const mainName = mainCfg ? `${mainCfg.modelName}[${mainCfg.provider}]` : (getModelManager().getModelName('main') ?? '');
+                await getModelManager().applyTaskModelConfig({
+                  main: mainName,
+                  quick: `${cfg.modelName}[${cfg.provider}]`,
+                });
+                console.log(`[UIServer] Switched sema-core quick model to: ${cfg.modelName}[${cfg.provider}]`);
+              } catch (e) {
+                console.warn('[UIServer] applyTaskModelConfig (quick) failed:', e);
+              }
             }
           }
+          res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ activeQuickId: id }));
+        } else {
+          // 设置主模型（原有逻辑）
+          setActiveLLMConfig(id);
+          if (id) {
+            const { configs } = loadLLMConfigs();
+            const cfg = configs.find(c => c.id === id);
+            if (cfg) {
+              try {
+                await getModelManager().addNewModel({
+                  provider: cfg.provider, modelName: cfg.modelName,
+                  baseURL: cfg.baseURL, apiKey: cfg.apiKey,
+                  maxTokens: cfg.maxTokens, contextLength: cfg.contextLength,
+                  adapt: cfg.adapt,
+                }, true);
+                await getModelManager().switchCurrentModel(`${cfg.modelName}[${cfg.provider}]`);
+                console.log(`[UIServer] Switched sema-core main model to: ${cfg.modelName}[${cfg.provider}]`);
+              } catch (e) {
+                console.warn('[UIServer] switchCurrentModel failed:', e);
+              }
+            }
+          }
+          res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ activeId: id }));
         }
-
-        res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ activeId: id }));
         return;
       }
     }
@@ -406,6 +442,17 @@ export class UIServer {
         JSON.stringify({ name, disabled: disabled.has(name) })
       );
       return;
+    }
+
+    if (urlPath === '/api/thinking') {
+      if (req.method === 'POST') {
+        const body = await this.readBody(req);
+        const { enabled } = JSON.parse(body) as { enabled: boolean };
+        saveThinkingEnabled(enabled);
+        this.agentPool.setThinkingEnabled(enabled);
+        res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ thinkingEnabled: enabled }));
+        return;
+      }
     }
 
     if (urlPath === '/api/admin-permissions') {

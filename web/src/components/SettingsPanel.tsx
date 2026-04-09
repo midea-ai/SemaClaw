@@ -1167,32 +1167,65 @@ interface LLMTabProps {
 }
 
 function LLMTab({ onOpenAdd, refreshKey }: LLMTabProps) {
-  const [configs, setConfigs]   = useState<LLMConfig[]>([]);
-  const [activeId, setActiveId] = useState<string | null>(null);
-  const [semaModel, setSemaModel] = useState<{ modelName: string; provider: string } | null>(null);
+  const [configs, setConfigs]         = useState<LLMConfig[]>([]);
+  const [activeId, setActiveId]       = useState<string | null>(null);
+  const [activeQuickId, setActiveQuickId] = useState<string | null>(null);
+  const [semaModel, setSemaModel]     = useState<{ modelName: string; provider: string } | null>(null);
+  const [semaQuickModel, setSemaQuickModel] = useState<{ modelName: string; provider: string } | null>(null);
+  const [thinkingEnabled, setThinkingEnabled] = useState(true);
 
   const load = async () => {
     try {
       const r = await fetch('/api/llm-config');
-      const data = await r.json() as { configs: LLMConfig[]; activeId: string | null; semaModel?: { modelName: string; provider: string } | null };
+      const data = await r.json() as {
+        configs: LLMConfig[];
+        activeId: string | null;
+        activeQuickId: string | null;
+        semaModel?: { modelName: string; provider: string } | null;
+        semaQuickModel?: { modelName: string; provider: string } | null;
+        thinkingEnabled?: boolean;
+      };
       setConfigs(data.configs);
       setActiveId(data.activeId);
+      setActiveQuickId(data.activeQuickId);
       setSemaModel(data.semaModel ?? null);
+      setSemaQuickModel(data.semaQuickModel ?? null);
+      setThinkingEnabled(data.thinkingEnabled ?? true);
     } catch { /* ignore */ }
+  };
+
+  const handleThinkingToggle = async () => {
+    const next = !thinkingEnabled;
+    setThinkingEnabled(next);
+    await fetch('/api/thinking', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: next }),
+    });
   };
 
   useEffect(() => { load(); }, [refreshKey]);
 
-  const handleSetActive = async (id: string) => {
+  const handleSetMain = async (id: string) => {
     await fetch('/api/llm-config/active', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id }),
+      body: JSON.stringify({ id, type: 'main' }),
     });
     setActiveId(id);
-    // 乐观更新 semaModel 显示
     const cfg = configs.find(c => c.id === id);
     if (cfg) setSemaModel({ modelName: cfg.modelName, provider: cfg.provider });
+  };
+
+  const handleSetQuick = async (id: string) => {
+    await fetch('/api/llm-config/active', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, type: 'quick' }),
+    });
+    setActiveQuickId(id);
+    const cfg = configs.find(c => c.id === id);
+    if (cfg) setSemaQuickModel({ modelName: cfg.modelName, provider: cfg.provider });
   };
 
   const handleDelete = async (id: string) => {
@@ -1200,27 +1233,61 @@ function LLMTab({ onOpenAdd, refreshKey }: LLMTabProps) {
     load();
   };
 
-  const activeConfig = configs.find(c => c.id === activeId);
-  // 显示来源：优先展示已选中的 config，其次展示 sema-core 实际运行的模型
-  const displayModel = activeConfig
+  const activeConfig      = configs.find(c => c.id === activeId);
+  const activeQuickConfig = configs.find(c => c.id === activeQuickId);
+
+  const displayMain = activeConfig
     ? { modelName: activeConfig.modelName, providerLabel: PROVIDERS[activeConfig.provider]?.name ?? activeConfig.provider }
     : semaModel
     ? { modelName: semaModel.modelName, providerLabel: PROVIDERS[semaModel.provider]?.name ?? semaModel.provider }
     : null;
 
+  const displayQuick = activeQuickConfig
+    ? { modelName: activeQuickConfig.modelName, providerLabel: PROVIDERS[activeQuickConfig.provider]?.name ?? activeQuickConfig.provider }
+    : semaQuickModel
+    ? { modelName: semaQuickModel.modelName, providerLabel: PROVIDERS[semaQuickModel.provider]?.name ?? semaQuickModel.provider }
+    : displayMain; // fallback：与主模型相同
+
   return (
     <div className="space-y-3">
-      {/* Current active model */}
+      {/* Current active models */}
       <div>
         <p className="text-[11px] font-semibold text-[#5BBFE8] uppercase tracking-wide mb-2">当前使用模型</p>
-        {displayModel ? (
-          <div className="bg-[#EEF7FD]/60 border border-[#5BBFE8]/20 rounded-xl p-3.5">
+        {displayMain || displayQuick ? (
+          <div className="bg-[#EEF7FD]/60 border border-[#5BBFE8]/20 rounded-xl p-3.5 space-y-2.5">
+            {/* Main model row */}
             <div className="flex items-center gap-2">
               <div className="w-2 h-2 rounded-full bg-[#5BBFE8] flex-shrink-0" />
-              <div className="min-w-0">
-                <p className="text-sm font-medium text-gray-800 truncate">{displayModel.modelName}</p>
-                <p className="text-[11px] text-gray-400">{displayModel.providerLabel}</p>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium text-gray-800 truncate">{displayMain?.modelName ?? '—'}</p>
+                <p className="text-[11px] text-gray-400">{displayMain?.providerLabel ?? ''}</p>
               </div>
+              <span className="text-[10px] text-[#5BBFE8] font-medium bg-[#5BBFE8]/10 px-1.5 py-0.5 rounded-md flex-shrink-0">主模型</span>
+            </div>
+            {/* Quick model row */}
+            <div className="flex items-center gap-2">
+              <div className="w-2 h-2 rounded-full bg-[#A78BFA] flex-shrink-0" />
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium text-gray-800 truncate">{displayQuick?.modelName ?? '—'}</p>
+                <p className="text-[11px] text-gray-400">{displayQuick?.providerLabel ?? ''}</p>
+              </div>
+              <span className="text-[10px] text-[#A78BFA] font-medium bg-[#A78BFA]/10 px-1.5 py-0.5 rounded-md flex-shrink-0">快速模型</span>
+            </div>
+            {/* Thinking toggle row */}
+            <div className="flex items-center justify-between pt-1.5 border-t border-[#5BBFE8]/10">
+              <span className="text-[11px] text-gray-500">思维链 (Thinking)</span>
+              <button
+                onClick={handleThinkingToggle}
+                className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors flex-shrink-0 ${
+                  thinkingEnabled ? 'bg-[#5BBFE8]' : 'bg-gray-200'
+                }`}
+                role="switch"
+                aria-checked={thinkingEnabled}
+              >
+                <span className={`inline-block h-3 w-3 transform rounded-full bg-white shadow transition-transform ${
+                  thinkingEnabled ? 'translate-x-3.5' : 'translate-x-0.5'
+                }`} />
+              </button>
             </div>
           </div>
         ) : (
@@ -1252,28 +1319,29 @@ function LLMTab({ onOpenAdd, refreshKey }: LLMTabProps) {
         ) : (
           <div className="space-y-2">
             {configs.map(c => {
-              const isActive = c.id === activeId;
+              const isMain  = c.id === activeId;
+              const isQuick = c.id === activeQuickId;
               return (
                 <div
                   key={c.id}
-                  onClick={() => handleSetActive(c.id)}
-                  className={`rounded-xl p-3 border cursor-pointer transition-all ${
-                    isActive
+                  className={`rounded-xl p-3 border transition-all ${
+                    isMain || isQuick
                       ? 'bg-[#EEF7FD]/60 border-[#5BBFE8]/30'
-                      : 'bg-gray-50 border-gray-100 hover:border-[#5BBFE8]/20 hover:bg-[#EEF7FD]/30'
+                      : 'bg-gray-50 border-gray-100'
                   }`}
                 >
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-1.5">
-                        {isActive && <div className="w-1.5 h-1.5 rounded-full bg-[#5BBFE8] flex-shrink-0" />}
+                      <div className="flex items-center gap-1.5 flex-wrap">
                         <p className="text-sm font-medium text-gray-800 truncate">{c.modelName}</p>
+                        {isMain  && <span className="text-[10px] text-[#5BBFE8] font-medium bg-[#5BBFE8]/10 px-1.5 py-0.5 rounded-md">主</span>}
+                        {isQuick && <span className="text-[10px] text-[#A78BFA] font-medium bg-[#A78BFA]/10 px-1.5 py-0.5 rounded-md">快速</span>}
                       </div>
                       <p className="text-[11px] text-gray-400 mt-0.5">{PROVIDERS[c.provider]?.name ?? c.provider} · {c.adapt === 'anthropic' ? 'Anthropic 格式' : 'OpenAI 格式'}</p>
                       <p className="text-[11px] text-gray-300 font-mono truncate mt-0.5">{c.baseURL}</p>
                     </div>
                     <button
-                      onClick={e => { e.stopPropagation(); handleDelete(c.id); }}
+                      onClick={() => handleDelete(c.id)}
                       className="flex-shrink-0 w-6 h-6 flex items-center justify-center rounded-lg hover:bg-red-50 text-gray-300 hover:text-red-400 transition-colors"
                     >
                       <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
@@ -1281,9 +1349,31 @@ function LLMTab({ onOpenAdd, refreshKey }: LLMTabProps) {
                       </svg>
                     </button>
                   </div>
-                  {isActive && (
-                    <p className="text-[10px] text-[#5BBFE8] mt-1.5 font-medium">● 使用中</p>
-                  )}
+                  {/* Action buttons */}
+                  <div className="flex gap-1.5 mt-2">
+                    <button
+                      onClick={() => handleSetMain(c.id)}
+                      className={`flex-1 py-1 text-[11px] font-medium rounded-lg transition-colors ${
+                        isMain
+                          ? 'bg-[#5BBFE8]/15 text-[#5BBFE8] cursor-default'
+                          : 'bg-gray-100 text-gray-500 hover:bg-[#5BBFE8]/10 hover:text-[#5BBFE8]'
+                      }`}
+                      disabled={isMain}
+                    >
+                      {isMain ? '● 主模型' : '设为主模型'}
+                    </button>
+                    <button
+                      onClick={() => handleSetQuick(c.id)}
+                      className={`flex-1 py-1 text-[11px] font-medium rounded-lg transition-colors ${
+                        isQuick
+                          ? 'bg-[#A78BFA]/15 text-[#A78BFA] cursor-default'
+                          : 'bg-gray-100 text-gray-500 hover:bg-[#A78BFA]/10 hover:text-[#A78BFA]'
+                      }`}
+                      disabled={isQuick}
+                    >
+                      {isQuick ? '● 快速模型' : '设为快速模型'}
+                    </button>
+                  </div>
                 </div>
               );
             })}

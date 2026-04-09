@@ -195,8 +195,12 @@ interface GlobalConfig {
   telegramBots?: TelegramBotConfig[];
   /** LLM API 配置列表 */
   llmConfigs?: LLMConfig[];
-  /** 当前激活的 LLM 配置 ID */
+  /** 当前激活的主模型 LLM 配置 ID */
   activeLlmConfigId?: string | null;
+  /** 当前激活的快速模型 LLM 配置 ID（null = 与主模型相同） */
+  activeQuickLlmConfigId?: string | null;
+  /** 是否启用 Thinking 模式（默认 true） */
+  thinkingEnabled?: boolean;
 }
 
 /**
@@ -459,13 +463,28 @@ export function saveAdminPermissionsConfig(opts: {
   });
 }
 
+// ===== Thinking 配置 =====
+
+/** 读取 Thinking 模式开关。默认 true（开启）。 */
+export function getThinkingEnabled(): boolean {
+  const cfg = loadGlobalConfig();
+  return cfg.thinkingEnabled ?? true;
+}
+
+/** 写入 Thinking 模式开关。 */
+export function saveThinkingEnabled(enabled: boolean): void {
+  const cfg = loadGlobalConfig();
+  saveGlobalConfig({ ...cfg, thinkingEnabled: enabled });
+}
+
 // ===== LLM 配置持久化 =====
 
-export function loadLLMConfigs(): { configs: LLMConfig[]; activeId: string | null } {
+export function loadLLMConfigs(): { configs: LLMConfig[]; activeId: string | null; activeQuickId: string | null } {
   const cfg = loadGlobalConfig();
   return {
     configs: cfg.llmConfigs ?? [],
     activeId: cfg.activeLlmConfigId ?? null,
+    activeQuickId: cfg.activeQuickLlmConfigId ?? null,
   };
 }
 
@@ -481,12 +500,18 @@ export function removeLLMConfig(id: string): void {
   const cfg = loadGlobalConfig();
   const configs = (cfg.llmConfigs ?? []).filter(x => x.id !== id);
   const activeId = cfg.activeLlmConfigId === id ? null : cfg.activeLlmConfigId;
-  saveGlobalConfig({ ...cfg, llmConfigs: configs, activeLlmConfigId: activeId });
+  const activeQuickId = cfg.activeQuickLlmConfigId === id ? null : cfg.activeQuickLlmConfigId;
+  saveGlobalConfig({ ...cfg, llmConfigs: configs, activeLlmConfigId: activeId, activeQuickLlmConfigId: activeQuickId });
 }
 
 export function setActiveLLMConfig(id: string | null): void {
   const cfg = loadGlobalConfig();
   saveGlobalConfig({ ...cfg, activeLlmConfigId: id });
+}
+
+export function setActiveQuickLLMConfig(id: string | null): void {
+  const cfg = loadGlobalConfig();
+  saveGlobalConfig({ ...cfg, activeQuickLlmConfigId: id });
 }
 
 // ===== GroupManager =====

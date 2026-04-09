@@ -24,7 +24,7 @@ import { config } from '../config';
 import { scheduleMCPConfig, workspaceMCPConfig, memoryMCPConfig, dispatchMCPConfig, feishuWikiMCPConfig } from '../mcp/mcpHelper';
 import { getFeishuApps } from '../gateway/GroupManager';
 import type { PermissionPayload, AskQuestionPayload } from './PermissionBridge';
-import { getAgentAllowedWorkDirs, getAdminPermissionsConfig } from '../gateway/GroupManager';
+import { getAgentAllowedWorkDirs, getAdminPermissionsConfig, getThinkingEnabled } from '../gateway/GroupManager';
 import { DailyLogger } from '../memory/DailyLogger';
 import { MemoryManager, formatSearchResults } from '../memory/MemoryManager';
 import { PermissionBridge, PermissionBridgeOptions } from './PermissionBridge';
@@ -108,6 +108,8 @@ export class AgentPool {
   private skipMainAgentPermissions = false;
   /** 所有 Agent 是否跳过权限审批（运行时状态，从 config.json 初始化） */
   private skipAllAgentsPermissions = false;
+  /** 是否启用 Thinking 模式（运行时状态，从 config.json 初始化） */
+  private thinkingEnabled = true;
   /** jid → 重置超时计时器的函数（processAndWait 运行期间有效） */
   private activeTimerResets = new Map<string, () => void>();
   /** jid → 当前运行时工作目录（workspace_switch 后更新） */
@@ -166,6 +168,8 @@ export class AgentPool {
     const permCfg = getAdminPermissionsConfig();
     this.skipMainAgentPermissions = permCfg.skipMainAgentPermissions;
     this.skipAllAgentsPermissions = permCfg.skipAllAgentsPermissions;
+    // 从 config.json 初始化 Thinking 开关
+    this.thinkingEnabled = getThinkingEnabled();
     // 监听 skills 热更新信号（CLI install/refresh 后写入）
     this.watchSkillsReloadSignal();
   }
@@ -240,6 +244,24 @@ export class AgentPool {
       updated++;
     }
     console.log(`[AgentPool] Permissions updated (skipMain=${opts.skipMainAgentPermissions}, skipAll=${opts.skipAllAgentsPermissions}), hot-updated ${updated} agent(s)`);
+  }
+
+  /**
+   * 更新 Thinking 开关（Web UI 调用）。
+   * 立即热更新所有运行中 agent，无需销毁重建。
+   */
+  setThinkingEnabled(enabled: boolean): void {
+    this.thinkingEnabled = enabled;
+    let updated = 0;
+    for (const core of this.cores.values()) {
+      core.updateThinking(enabled);
+      updated++;
+    }
+    console.log(`[AgentPool] Thinking mode ${enabled ? 'enabled' : 'disabled'}, hot-updated ${updated} agent(s)`);
+  }
+
+  getThinkingEnabled(): boolean {
+    return this.thinkingEnabled;
   }
 
   /** 根据当前开关状态和 binding 计算该 agent 是否跳过权限 */
@@ -611,7 +633,10 @@ export class AgentPool {
       console.log(`[AgentPool] Applied pending dispatch workspace for ${binding.jid}: ${pendingWorkspace}`);
     }
 
-    console.log(`[AgentPool] Created agent for ${binding.jid} (folder: ${binding.folder}, skipPerms: ${skipPerms})`);
+    // 应用 Thinking 开关（直接 mutate initialConfig，保证 AsyncLocalStorage 上下文内生效）
+    core.updateThinking(this.thinkingEnabled);
+
+    console.log(`[AgentPool] Created agent for ${binding.jid} (folder: ${binding.folder}, skipPerms: ${skipPerms}, thinking: ${this.thinkingEnabled})`);
     return core;
     } catch (e) {
       // 创建失败时清理已注册的事件监听器和 PermissionBridge 绑定

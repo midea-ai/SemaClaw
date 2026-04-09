@@ -15,6 +15,30 @@
  */
 
 import 'dotenv/config';
+import * as fs from 'fs';
+import * as path from 'path';
+import * as os from 'os';
+
+// ===== model.conf 隔离（必须在任何 sema-core 模块加载前执行）=====
+// semaclaw 使用独立的 ~/.semaclaw/semaclaw-model.conf，避免与其他基于 sema-code-core
+// 的应用（如 sema-code 编辑器）共享 ~/.sema/model.conf 造成互相干扰。
+{
+  const SEMACLAW_DIR = path.join(os.homedir(), '.semaclaw');
+  const semaclawModelConf = path.join(SEMACLAW_DIR, 'semaclaw-model.conf');
+  if (!fs.existsSync(semaclawModelConf)) {
+    const defaultModelConf = path.join(os.homedir(), '.sema', 'model.conf');
+    if (fs.existsSync(defaultModelConf)) {
+      fs.mkdirSync(SEMACLAW_DIR, { recursive: true });
+      fs.copyFileSync(defaultModelConf, semaclawModelConf);
+      console.log('[SemaClaw] Migrated ~/.sema/model.conf → ~/.semaclaw/semaclaw-model.conf');
+    }
+  }
+  // 动态 require 以确保 override 在模块初始化前生效
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { setModelConfigPathOverride } = require('sema-core') as { setModelConfigPathOverride: (p: string) => void };
+  setModelConfigPathOverride(semaclawModelConf);
+}
+
 import { runSetupIfNeeded } from './setup';
 import { initDb } from './db/db';
 import { GroupManager, ensureAdminGroup, ensureWechatAdminGroup, syncGroupsFromConfig, getFeishuApps, getQQApps, getWechatAccounts, getTelegramBots, loadLLMConfigs } from './gateway/GroupManager';
