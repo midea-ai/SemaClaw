@@ -142,6 +142,7 @@ export function sendMCPConfig(opts: {
 export function dispatchMCPConfig(opts: {
   statePath: string;
   adminFolder: string;
+  agentsConfigDir?: string;
 }): MCPServerConfig {
   const serverPath = isDevMode
     ? path.join(__dirname, 'dispatch-server.ts')
@@ -156,6 +157,33 @@ export function dispatchMCPConfig(opts: {
       ...baseEnv,
       SEMACLAW_DISPATCH_STATE_PATH: opts.statePath,
       SEMACLAW_ADMIN_FOLDER: opts.adminFolder,
+      ...(opts.agentsConfigDir ? { SEMACLAW_AGENTS_CONFIG_DIR: opts.agentsConfigDir } : {}),
+    },
+  };
+}
+
+/**
+ * 构建 VirtualAgent MCP 服务器配置（isAdmin 群组专用）
+ */
+export function virtualMCPConfig(opts: {
+  agentsConfigDir: string;
+  adminFolder: string;
+  defaultWorkspace: string;
+}): MCPServerConfig {
+  const serverPath = isDevMode
+    ? path.join(__dirname, 'virtual-server.ts')
+    : path.join(__dirname, 'virtual-server.js');
+
+  return {
+    name: 'semaclaw-virtual',
+    transport: 'stdio',
+    command: isDevMode ? 'tsx' : process.execPath,
+    args: [serverPath],
+    env: {
+      ...baseEnv,
+      SEMACLAW_AGENTS_CONFIG_DIR: opts.agentsConfigDir,
+      SEMACLAW_ADMIN_FOLDER: opts.adminFolder,
+      SEMACLAW_DEFAULT_WORKSPACE: opts.defaultWorkspace,
     },
   };
 }

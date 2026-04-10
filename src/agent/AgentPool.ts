@@ -21,7 +21,7 @@ import type { MessageCompleteData, StateUpdateData, SessionErrorData, TodosUpdat
 import type { ScheduledTask } from '../types';
 import { GroupBinding, IChannel } from '../types';
 import { config } from '../config';
-import { scheduleMCPConfig, workspaceMCPConfig, memoryMCPConfig, dispatchMCPConfig, feishuWikiMCPConfig } from '../mcp/mcpHelper';
+import { scheduleMCPConfig, workspaceMCPConfig, memoryMCPConfig, dispatchMCPConfig, feishuWikiMCPConfig, virtualMCPConfig } from '../mcp/mcpHelper';
 import { getFeishuApps } from '../gateway/GroupManager';
 import type { PermissionPayload, AskQuestionPayload } from './PermissionBridge';
 import { getAgentAllowedWorkDirs, getAdminPermissionsConfig, getThinkingEnabled } from '../gateway/GroupManager';
@@ -584,10 +584,10 @@ export class AgentPool {
       this.setupWorkspaceWatcher(binding.jid, binding.folder, stateFile, core);
     }
 
-    // 主频道额外注入 DispatchTool MCP 服务器
+    // 主频道额外注入 DispatchTool MCP 服务器（虚拟 agent 统一走 DAG dispatch，不注入 run_persona）
     if (binding.isAdmin) {
       await addMCP(
-        dispatchMCPConfig({ statePath: config.paths.dispatchStatePath, adminFolder: binding.folder }),
+        dispatchMCPConfig({ statePath: config.paths.dispatchStatePath, adminFolder: binding.folder, agentsConfigDir: config.paths.virtualAgentsDir }),
         'DispatchTool'
       );
     }

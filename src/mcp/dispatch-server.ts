@@ -21,6 +21,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 import type { DispatchState, DispatchParent, DispatchTask } from '../agent/DispatchBridge';
+import { PersonaRegistry } from '../agent/PersonaRegistry';
 
 // TS2589 workaround: MCP SDK zod type instantiation
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -39,6 +40,10 @@ if (!adminFolder) {
   console.error('[dispatch-server] Missing SEMACLAW_ADMIN_FOLDER');
   process.exit(1);
 }
+
+// 虚拟 agent 人设注册表（可选）
+const agentsConfigDir = process.env.SEMACLAW_AGENTS_CONFIG_DIR;
+const personaRegistry = agentsConfigDir ? new PersonaRegistry(agentsConfigDir) : null;
 
 /** 读取 admin agent 当前工作目录（workspace state 文件） */
 function readAdminWorkspace(): string {
@@ -129,13 +134,24 @@ function findTaskByLabel(state: DispatchState, parentId: string, label: string):
   return parent?.tasks.find(t => t.label === label);
 }
 
-/** 解析 agentName（支持 name 或 id 匹配，大小写不敏感） */
-function resolveAgent(state: DispatchState, agentName: string): { id: string; jid: string } | null {
+/** 解析 agentName（支持 name/id 匹配 + persona:{name} 格式） */
+function resolveAgent(state: DispatchState, agentName: string): {
+  id: string; jid: string; isVirtual: boolean; personaName?: string;
+} | null {
+  // persona:{name} 格式：虚拟 agent
+  if (agentName.startsWith('persona:')) {
+    const personaName = agentName.slice(8);
+    if (personaRegistry?.get(personaName)) {
+      return { id: agentName, jid: '', isVirtual: true, personaName };
+    }
+    return null;
+  }
+  // 持久 agent
   const lower = agentName.toLowerCase();
   const agent = state.agents.find(
     a => a.name.toLowerCase() === lower || a.id.toLowerCase() === lower
   );
-  return agent ? { id: agent.id, jid: agent.jid } : null;
+  return agent ? { id: agent.id, jid: agent.jid, isVirtual: false } : null;
 }
 
 /**
@@ -175,16 +191,34 @@ const tool = server.tool.bind(server) as AnyZod;
 
 tool(
   'list_agents',
-  'List all available non-admin agents that can be dispatched tasks.',
+  'List all available agents (persistent + virtual personas) that can be dispatched tasks.',
   {},
   async () => {
     const state = readState();
-    if (state.agents.length === 0) {
-      return { content: [{ type: 'text', text: 'No agents registered.' }] };
+    const lines: string[] = [];
+
+    // 持久 agent
+    if (state.agents.length > 0) {
+      lines.push('**Persistent Agents:**');
+      for (const a of state.agents) {
+        lines.push(`- ${a.name} (id: ${a.id}, channel: ${a.channel || 'web-only'})`);
+      }
     }
-    const lines = state.agents.map(a =>
-      `- ${a.name} (id: ${a.id}, channel: ${a.channel || 'web-only'})`
-    );
+
+    // 虚拟 agent personas
+    const personas = personaRegistry?.list() ?? [];
+    if (personas.length > 0) {
+      if (lines.length > 0) lines.push('');
+      lines.push('**Virtual Personas:**');
+      for (const p of personas) {
+        const desc = p.description.replace(/^["']|["']$/g, '');
+        lines.push(`- persona:${p.name} — ${desc}`);
+      }
+    }
+
+    if (lines.length === 0) {
+      return { content: [{ type: 'text', text: 'No agents or personas registered.' }] };
+    }
     return { content: [{ type: 'text', text: lines.join('\n') }] };
   }
 );
@@ -234,15 +268,23 @@ tool(
       }
     }
 
-    // 解析 agentName
-    type Resolved = { label: string; agentId: string; agentJid: string; prompt: string; dependsOn: string[] };
+    // 解析 agentName（支持持久 agent 和 persona:{name}）
+    type Resolved = {
+      label: string; agentId: string; agentJid: string;
+      prompt: string; dependsOn: string[];
+      isVirtual: boolean; personaName?: string;
+    };
     const resolved: Resolved[] = [];
     for (const t of normalized) {
       const agent = resolveAgent(state, t.agentName);
       if (!agent) {
         errors.push(`Unknown agent: "${t.agentName}" (for task "${t.label}")`);
       } else {
-        resolved.push({ label: t.label, agentId: agent.id, agentJid: agent.jid, prompt: t.prompt, dependsOn: t.dependsOn });
+        resolved.push({
+          label: t.label, agentId: agent.id, agentJid: agent.jid,
+          prompt: t.prompt, dependsOn: t.dependsOn,
+          isVirtual: agent.isVirtual, personaName: agent.personaName,
+        });
       }
     }
 
@@ -288,6 +330,7 @@ tool(
           timeoutSeconds,
           timeoutAt:   null,
           completedAt: null,
+          ...(r.isVirtual ? { isVirtual: true, personaName: r.personaName } : {}),
         } satisfies DispatchTask)),
       };
       s.parents.push(parent);

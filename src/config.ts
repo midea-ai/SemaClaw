@@ -113,6 +113,13 @@ export const config = {
       envOptional('WIKI_DIR', path.join(home, 'semaclaw', 'wiki'))
     ),
     /**
+     * ~/semaclaw/virtual-agents — 虚拟 agent 人设目录
+     * 存放 *.md 人设文件，PersonaRegistry 直接扫描此目录
+     */
+    virtualAgentsDir: path.resolve(
+      envOptional('SEMACLAW_VIRTUAL_AGENTS_DIR', path.join(home, 'semaclaw', 'virtual-agents'))
+    ),
+    /**
      * <packageRoot>/skills — semaclaw 内置 bundled skills
      * 随包分发，优先级最低（用户 skills 可覆盖）。
      * 可通过 SEMACLAW_BUNDLED_SKILLS_DIR env 覆盖（开发/测试用）。

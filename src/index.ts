@@ -55,6 +55,8 @@ import { WebSocketGateway } from './gateway/WebSocketGateway';
 import { UIServer } from './gateway/UIServer';
 import { config } from './config';
 import { DispatchBridge } from './agent/DispatchBridge';
+import { PersonaRegistry } from './agent/PersonaRegistry';
+import { VirtualWorkerPool } from './agent/VirtualWorkerPool';
 import { WikiManager } from './wiki/WikiManager';
 
 async function main(): Promise<void> {
@@ -378,6 +380,12 @@ async function main(): Promise<void> {
     (jid) => agentPool.revertDispatchWorkspace(jid),
   );
   dispatchBridge.start();
+
+  // ===== 9.1 虚拟 Agent 注入（Phase 2 DAG 集成）=====
+  const personaRegistry = new PersonaRegistry(config.paths.virtualAgentsDir);
+  const virtualWorkerPool = new VirtualWorkerPool();
+  dispatchBridge.setVirtualWorkerPool(personaRegistry, virtualWorkerPool);
+
   agentPool.setGroupQueue(groupQueue);
   agentPool.setDispatchBridge(dispatchBridge);
   groupManager.setOnGroupsChanged(() => dispatchBridge.updateAgents(groupManager.list()));
@@ -389,6 +397,8 @@ async function main(): Promise<void> {
   wsGateway.start();
   agentPool.setAgentEventSink(wsGateway);
   dispatchBridge.setWsNotify(parents => wsGateway.notifyDispatchUpdate(parents));
+  // 虚拟 agent todos 推送到 WsGateway
+  virtualWorkerPool.setTodosNotify((jid, name, todos) => wsGateway.notifyAgentTodos(jid, name, todos));
   wsGateway.setDispatchBridgeGetter(() => dispatchBridge.getParents());
   wsGateway.setAgentTodosGetter(() => agentPool.getAllCachedTodos());
   messageRouter.setWsGateway(wsGateway);

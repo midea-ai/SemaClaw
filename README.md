@@ -84,6 +84,7 @@ For a complete walkthrough including environment variables, CLI usage, runtime l
 | Document | Description |
 |---|---|
 | [Quick Start & Usage Guide](docs/QUICK_START.md) | Installation, configuration, CLI commands, runtime layout, MCP tools |
+| [Remote Access Guide](docs/REMOTE_ACCESS.md) | Expose the Web UI securely via reverse proxy (Nginx / Caddy) |
 | Technical Report | *Coming soon* |
 | [Contributing](CONTRIBUTING.md) | *Coming soon* |
 

@@ -9,6 +9,7 @@ const AGENT_COLORS: Record<string, string> = {
 };
 
 function agentColor(agentId: string): string {
+  if (agentId.startsWith('persona:')) return '#a855f7'; // purple for virtual
   return AGENT_COLORS[agentId] ?? '#8b5cf6';
 }
 
@@ -44,6 +45,7 @@ function statusIconColor(status: string): string {
   if (status === 'done') return 'text-green-600';
   if (status === 'processing') return 'text-[#5BBFE8]';
   if (status === 'error') return 'text-red-500';
+  if (status === 'timeout') return 'text-orange-500';
   return 'text-gray-400';
 }
 
@@ -187,7 +189,7 @@ export function DispatchTree({ parents, onSelectTask, selectedTaskId, adminPause
                         id={`dtask-${p.id}-${t.label}`}
                         data-status={t.status}
                         onClick={() => onSelectTask?.(t)}
-                        className={`text-left border-l-2 rounded px-2 py-1.5 min-w-[110px] max-w-[160px] cursor-pointer transition-all hover:-translate-y-px hover:shadow-sm ${isProcessingPaused ? 'border-l-orange-400 bg-orange-50' : statusColors(t.status)} ${isSelected ? 'ring-1 ring-[#5BBFE8]' : ''}`}
+                        className={`text-left border-l-2 rounded px-2 py-1.5 min-w-[110px] max-w-[160px] cursor-pointer transition-all hover:-translate-y-px hover:shadow-sm ${t.isVirtual ? 'border-dashed' : ''} ${isProcessingPaused ? 'border-l-orange-400 bg-orange-50' : statusColors(t.status)} ${isSelected ? 'ring-1 ring-[#5BBFE8]' : ''}`}
                       >
                         <div className="flex items-center justify-between gap-1 mb-0.5">
                           <div className="flex items-center gap-1">
@@ -202,7 +204,7 @@ export function DispatchTree({ parents, onSelectTask, selectedTaskId, adminPause
                             className="text-[9px] px-1 py-0.5 rounded font-medium"
                             style={{ color, background: `${color}22` }}
                           >
-                            {t.agentId.replace('web-', '')}
+                            {t.isVirtual ? (t.personaName ?? t.agentId) : t.agentId.replace('web-', '')}
                           </span>
                         </div>
                         <p className="text-[10px] text-gray-400 leading-snug line-clamp-2">{t.prompt}</p>

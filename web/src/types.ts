@@ -85,8 +85,8 @@ export type TaskStatus = 'registered' | 'processing' | 'done' | 'error' | 'timeo
 export interface DispatchTask {
   id: string;
   label: string;
-  agentId: string;   // folder name (e.g. "web-backend")
-  agentJid: string;
+  agentId: string;   // 持久: folder, 虚拟: "persona:code-reviewer"
+  agentJid: string;  // 持久: jid,    虚拟: ""
   dependsOn: string[];
   status: TaskStatus;
   prompt: string;
@@ -95,6 +95,10 @@ export interface DispatchTask {
   startedAt: string | null;
   timeoutAt: string;
   completedAt: string | null;
+  /** 是否为虚拟 agent 任务 */
+  isVirtual?: boolean;
+  /** 虚拟 agent 的人设名称 */
+  personaName?: string;
 }
 
 export interface DispatchParent {

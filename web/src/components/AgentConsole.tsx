@@ -61,6 +61,8 @@ export function AgentConsole({ dispatchParents, agentTodos, messages, groups, ag
   // Selected task's agent todos for the detail panel
   const selectedAgentTodos = selectedTask
     ? Object.entries(agentTodos).find(([jid]) => {
+        // 虚拟 agent：todos 通过 virtual:{taskId} 作为 jid 推送
+        if (selectedTask.isVirtual) return jid === `virtual:${selectedTask.id}`;
         const group = groups.find(g => g.jid === jid);
         return group?.folder === selectedTask.agentId;
       })
@@ -162,17 +164,19 @@ export function AgentConsole({ dispatchParents, agentTodos, messages, groups, ag
                       selectedTask.status === 'done' ? 'text-green-600'
                       : selectedTask.status === 'processing' ? 'text-[#5BBFE8]'
                       : selectedTask.status === 'error' ? 'text-red-500'
+                      : selectedTask.status === 'timeout' ? 'text-orange-500'
                       : 'text-gray-500'
                     }`}>{selectedTask.label}</span>
                     <span className={`text-[9px] px-1 py-0.5 rounded font-semibold flex-shrink-0 ${
                       selectedTask.status === 'done' ? 'bg-green-50 text-green-600'
                       : selectedTask.status === 'processing' ? 'bg-blue-50 text-[#5BBFE8]'
                       : selectedTask.status === 'error' ? 'bg-red-50 text-red-500'
+                      : selectedTask.status === 'timeout' ? 'bg-orange-50 text-orange-500'
                       : 'bg-gray-50 text-gray-400'
                     }`}>{selectedTask.status}</span>
                   </div>
                   <div className="flex items-center gap-1 flex-shrink-0">
-                    <span className="text-[9px] px-1.5 py-0.5 rounded font-medium bg-purple-50 text-purple-600">{selectedTask.agentId}</span>
+                    <span className="text-[9px] px-1.5 py-0.5 rounded font-medium bg-purple-50 text-purple-600">{selectedTask.isVirtual ? (selectedTask.personaName ?? selectedTask.agentId) : selectedTask.agentId}</span>
                     <button onClick={() => setSelectedTask(null)} className="text-[10px] text-gray-300 hover:text-gray-500">✕</button>
                   </div>
                 </div>

@@ -25,6 +25,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import type { GroupBinding } from '../types';
+import type { PersonaRegistry } from './PersonaRegistry';
+import type { VirtualWorkerPool } from './VirtualWorkerPool';
 
 // ===== Types =====
 
@@ -41,8 +43,8 @@ export interface DispatchTask {
   id: string;
   /** 用户指定的任务标签，同 parent 内唯一，用于 dependsOn 引用和 dispatch_task 调用 */
   label: string;
-  agentId: string;   // folder
-  agentJid: string;
+  agentId: string;   // 持久: folder, 虚拟: "persona:code-reviewer"
+  agentJid: string;  // 持久: jid,    虚拟: "" (空字符串)
   /** 该任务启动前必须达到 terminal 状态的其他任务的 label 列表 */
   dependsOn: string[];
   status: TaskStatus;
@@ -53,6 +55,10 @@ export interface DispatchTask {
   timeoutSeconds: number;
   timeoutAt: string | null;
   completedAt: string | null;
+  /** 是否为虚拟 agent 任务（前端用于区分显示逻辑） */
+  isVirtual?: boolean;
+  /** 虚拟 agent 的人设名称（如 "code-reviewer"） */
+  personaName?: string;
 }
 
 export interface DispatchParent {
@@ -103,6 +109,9 @@ export class DispatchBridge {
    * processPending 不会为暂停的 admin 启动新任务。
    */
   private pausedAdmins = new Set<string>();
+  /** Phase 2: 虚拟 agent 支持 */
+  private personaRegistry: PersonaRegistry | null = null;
+  private virtualWorkerPool: VirtualWorkerPool | null = null;
 
   constructor(
     private readonly statePath: string,
@@ -123,6 +132,12 @@ export class DispatchBridge {
 
   setWsNotify(fn: (parents: DispatchParent[]) => void): void {
     this.wsNotify = fn;
+  }
+
+  /** 注入虚拟 agent 依赖（Phase 2 DAG 集成） */
+  setVirtualWorkerPool(registry: PersonaRegistry, pool: VirtualWorkerPool): void {
+    this.personaRegistry = registry;
+    this.virtualWorkerPool = pool;
   }
 
   /** 返回当前所有 parent 供 WsGateway 初始推送 */
@@ -212,10 +227,10 @@ export class DispatchBridge {
 
   /**
    * 将指定 taskId 的任务标记为 done（task-centric，精准匹配）。
+   * 支持持久 agent（activeTasks 有记录）和虚拟 agent（无 jid）。
    */
   notifyTaskDone(taskId: string, text: string): void {
-    const jid = this.removeActiveTask(taskId);
-    if (!jid) return;
+    const jid = this.removeActiveTask(taskId); // 持久 agent 返回 jid，虚拟 agent 返回 undefined
     const now = new Date().toISOString();
     let taskAdminFolder: string | null = null;
     let completedParentAdminFolder: string | null = null;
@@ -223,6 +238,8 @@ export class DispatchBridge {
       for (const parent of state.parents) {
         const task = parent.tasks.find(t => t.id === taskId);
         if (!task) continue;
+        // 防止已 cancel 的虚拟任务悬空回调覆盖 terminal 状态
+        if (TERMINAL.includes(task.status)) break;
         taskAdminFolder = parent.adminFolder;
         task.status      = 'done';
         task.result      = text;
@@ -235,13 +252,13 @@ export class DispatchBridge {
         break;
       }
     });
-    console.log(`[DispatchBridge] Task ${taskId} done for ${jid}`);
+    console.log(`[DispatchBridge] Task ${taskId} done${jid ? ` for ${jid}` : ' (virtual)'}`);
     if (taskAdminFolder) this.onAdminActivity?.(taskAdminFolder);
     if (completedParentAdminFolder) {
       this.activateNextQueued(completedParentAdminFolder);
     }
-    this.processNextPending(jid);
-    if (!this.hasActiveTasks(jid)) {
+    this.processNextPending(jid ?? '');
+    if (jid && !this.hasActiveTasks(jid)) {
       this.revertWorkspace(jid);
     }
   }
@@ -276,10 +293,10 @@ export class DispatchBridge {
 
   /**
    * 将指定 taskId 的任务标记为 error（task-centric，精准匹配）。
+   * 支持持久 agent 和虚拟 agent。
    */
   notifyTaskError(taskId: string, errorMessage: string): void {
     const jid = this.removeActiveTask(taskId);
-    if (!jid) return;
     const now = new Date().toISOString();
     let taskAdminFolder: string | null = null;
     let completedParentAdminFolder: string | null = null;
@@ -287,6 +304,8 @@ export class DispatchBridge {
       for (const parent of state.parents) {
         const task = parent.tasks.find(t => t.id === taskId);
         if (!task) continue;
+        // 防止已 cancel 的虚拟任务悬空回调覆盖 terminal 状态
+        if (TERMINAL.includes(task.status)) break;
         taskAdminFolder = parent.adminFolder;
         task.status      = 'error';
         task.result      = errorMessage;
@@ -299,13 +318,13 @@ export class DispatchBridge {
         break;
       }
     });
-    console.warn(`[DispatchBridge] Task ${taskId} error for ${jid}: ${errorMessage}`);
+    console.warn(`[DispatchBridge] Task ${taskId} error${jid ? ` for ${jid}` : ' (virtual)'}: ${errorMessage}`);
     if (taskAdminFolder) this.onAdminActivity?.(taskAdminFolder);
     if (completedParentAdminFolder) {
       this.activateNextQueued(completedParentAdminFolder);
     }
-    this.processNextPending(jid);
-    if (!this.hasActiveTasks(jid)) {
+    this.processNextPending(jid ?? '');
+    if (jid && !this.hasActiveTasks(jid)) {
       this.revertWorkspace(jid);
     }
   }
@@ -352,7 +371,12 @@ export class DispatchBridge {
         if (parent.status !== 'active' && parent.status !== 'queued') continue;
         for (const task of parent.tasks) {
           if (task.status === 'processing') {
-            affectedJids.push(task.agentJid);
+            if (task.isVirtual) {
+              // 虚拟 agent：通过 VirtualWorkerPool 中止运行中的实例
+              this.virtualWorkerPool?.cancelTask(task.id);
+            } else {
+              affectedJids.push(task.agentJid);
+            }
             this.removeActiveTask(task.id);
             task.status = 'error';
             task.result = 'Cancelled: admin agent stopped';
@@ -388,7 +412,7 @@ export class DispatchBridge {
       for (const parent of state.parents) {
         if (parent.adminFolder !== adminFolder || parent.status !== 'active') continue;
         for (const task of parent.tasks) {
-          if (task.status === 'processing' && this.activeTasks.has(task.id)) {
+          if (task.status === 'processing' && task.agentJid && this.activeTasks.has(task.id)) {
             childJids.push(task.agentJid);
           }
         }
@@ -433,11 +457,11 @@ export class DispatchBridge {
     try { state = this.readState(); } catch { return; }
     const now = new Date();
 
-    // 超时检测
+    // 超时检测（仅持久 agent 任务；虚拟任务由 VirtualWorkerPool 内部 timeout 管理）
     for (const parent of state.parents) {
       if (parent.status !== 'active') continue;
       for (const task of parent.tasks) {
-        if (task.status === 'processing' && task.timeoutAt && new Date(task.timeoutAt) < now) {
+        if (task.status === 'processing' && !task.isVirtual && task.timeoutAt && new Date(task.timeoutAt) < now) {
           const nowIso = now.toISOString();
           let completedAdminFolder: string | null = null;
           this.modifyState(s => {
@@ -464,17 +488,13 @@ export class DispatchBridge {
       }
     }
 
-    // 启动 registered 任务（同 jid 同时只允许一个 processing，且所有依赖均已 terminal）
+    // 启动 registered 任务
     try { state = this.readState(); } catch { return; }
     for (const parent of state.parents) {
       if (parent.status !== 'active') continue;
-      if (this.pausedAdmins.has(parent.adminFolder)) continue; // admin 已暂停，不启动新任务
+      if (this.pausedAdmins.has(parent.adminFolder)) continue;
       for (const task of parent.tasks) {
-        if (
-          task.status === 'registered' &&
-          !this.hasActiveTasks(task.agentJid) &&
-          this.isReady(task, parent.tasks)
-        ) {
+        if (task.status === 'registered' && this.canStartTask(task, parent.tasks)) {
           this.startTask(parent, task);
         }
       }
@@ -483,8 +503,6 @@ export class DispatchBridge {
 
   /**
    * 任意任务完成后，扫描所有 active parent 中被新解锁的 registered 任务并启动。
-   * 不限制 jid：跨 agent 的依赖在这里被触发。
-   * sameJidFirst：优先处理与完成任务同 jid 的下一个任务（快速路径）。
    */
   private processNextPending(_completedJid: string): void {
     try {
@@ -493,11 +511,7 @@ export class DispatchBridge {
         if (parent.status !== 'active') continue;
         if (this.pausedAdmins.has(parent.adminFolder)) continue;
         for (const task of parent.tasks) {
-          if (
-            task.status === 'registered' &&
-            !this.hasActiveTasks(task.agentJid) &&
-            this.isReady(task, parent.tasks)
-          ) {
+          if (task.status === 'registered' && this.canStartTask(task, parent.tasks)) {
             this.startTask(parent, task);
           }
         }
@@ -506,9 +520,58 @@ export class DispatchBridge {
   }
 
   /**
+   * 判断任务是否可以启动：依赖就绪 + 并发约束满足。
+   * 持久 agent：同 jid 同时只允许一个 processing。
+   * 虚拟 agent：检查 persona 并发上限，不检查 jid。
+   */
+  private canStartTask(task: DispatchTask, allTasks: DispatchTask[]): boolean {
+    if (!this.isReady(task, allTasks)) return false;
+    if (task.isVirtual && task.personaName) {
+      // 虚拟 agent：检查 persona 并发上限
+      const pool = this.virtualWorkerPool;
+      const registry = this.personaRegistry;
+      if (!pool || !registry) return false;
+      const persona = registry.get(task.personaName);
+      if (!persona) return false;
+      return pool.getActiveCount(task.personaName) < persona.maxConcurrent;
+    }
+    // 持久 agent：同 jid 同时只允许一个 processing
+    return !this.hasActiveTasks(task.agentJid);
+  }
+
+  /**
    * 判断任务是否满足启动条件：所有依赖任务均已达到 terminal 状态。
    * continue 策略：error / timeout 同样视为 terminal，不阻塞后续任务。
    */
+  /** 内部辅助：将任务标记为 error 并检查 parent 完成状态 */
+  private markTaskError(taskId: string, errorMessage: string): void {
+    const now = new Date().toISOString();
+    let completedParentAdminFolder: string | null = null;
+    let taskAdminFolder: string | null = null;
+    this.modifyState(state => {
+      for (const parent of state.parents) {
+        const task = parent.tasks.find(t => t.id === taskId);
+        if (!task) continue;
+        taskAdminFolder = parent.adminFolder;
+        task.status = 'error';
+        task.result = errorMessage;
+        task.completedAt = now;
+        if (parent.tasks.every(t => TERMINAL.includes(t.status))) {
+          parent.status = 'done';
+          parent.completedAt = now;
+          completedParentAdminFolder = parent.adminFolder;
+        }
+        break;
+      }
+    });
+    console.warn(`[DispatchBridge] Task ${taskId} error: ${errorMessage}`);
+    if (taskAdminFolder) this.onAdminActivity?.(taskAdminFolder);
+    if (completedParentAdminFolder) {
+      this.activateNextQueued(completedParentAdminFolder);
+    }
+    this.processNextPending('');
+  }
+
   private isReady(task: DispatchTask, allTasks: DispatchTask[]): boolean {
     return task.dependsOn.every(depLabel => {
       const dep = allTasks.find(t => t.label === depLabel);
@@ -566,25 +629,35 @@ export class DispatchBridge {
         if (t) { t.status = 'processing'; t.startedAt = startedAt; t.timeoutAt = timeoutAt; }
       }
     });
-    this.addActiveTask(task.id, task.agentJid);
-    console.log(`[DispatchBridge] Starting ${task.id}(${task.label}) → ${task.agentJid}: "${task.prompt.slice(0, 50)}"`);
-    try {
-      this.sendToAgent(task.agentJid, task.id, augmented, parent.sharedWorkspace ?? '');
-    } catch (err) {
-      console.error(`[DispatchBridge] sendToAgent failed for ${task.agentJid}:`, err);
-      this.removeActiveTask(task.id);
-      this.modifyState(state => {
-        for (const p of state.parents) {
-          const t = p.tasks.find(x => x.id === task.id);
-          if (!t) continue;
-          t.status = 'error'; t.completedAt = new Date().toISOString();
-          if (p.tasks.every(x => TERMINAL.includes(x.status))) {
-            p.status = 'done'; p.completedAt = new Date().toISOString();
-          }
+    const taskTarget = task.isVirtual ? `persona:${task.personaName}` : task.agentJid;
+    console.log(`[DispatchBridge] Starting ${task.id}(${task.label}) → ${taskTarget}: "${task.prompt.slice(0, 50)}"`);
+
+    if (task.isVirtual && task.personaName) {
+      // 虚拟 agent 路径：通过 VirtualWorkerPool 非阻塞执行
+      const persona = this.personaRegistry?.get(task.personaName);
+      if (!persona || !this.virtualWorkerPool) {
+        this.markTaskError(task.id, `Virtual agent setup error: persona "${task.personaName}" not available`);
+        return;
+      }
+      // 虚拟任务不追踪 activeTasks（无 jid），由 VirtualWorkerPool.activeCounts 管理并发
+      this.virtualWorkerPool.run(persona, augmented, parent.sharedWorkspace ?? process.cwd(), {
+        timeout: task.timeoutSeconds,
+        taskId: task.id,
+      })
+        .then(r => this.notifyTaskDone(task.id, r.result))
+        .catch(e => this.notifyTaskError(task.id, e.message));
+    } else {
+      // 持久 agent 路径
+      this.addActiveTask(task.id, task.agentJid);
+      try {
+        this.sendToAgent(task.agentJid, task.id, augmented, parent.sharedWorkspace ?? '');
+      } catch (err) {
+        console.error(`[DispatchBridge] sendToAgent failed for ${task.agentJid}:`, err);
+        this.removeActiveTask(task.id);
+        this.markTaskError(task.id, `sendToAgent failed: ${err}`);
+        if (!this.hasActiveTasks(task.agentJid)) {
+          this.revertWorkspace(task.agentJid);
         }
-      });
-      if (!this.hasActiveTasks(task.agentJid)) {
-        this.revertWorkspace(task.agentJid);
       }
     }
   }
