@@ -229,6 +229,18 @@ export class AgentPool {
     };
   }
 
+  /** 虚拟 agent 继承主 agent 的权限配置 */
+  getSkipPermsForVirtual(): boolean {
+    if (this.skipAllAgentsPermissions) return true;
+    if (this.skipMainAgentPermissions) return true;
+    return false;
+  }
+
+  /** 暴露 PermissionBridge 供 VirtualWorkerPool 绑定虚拟 agent 权限请求 */
+  getPermissionBridge(): PermissionBridge {
+    return this.permissionBridge;
+  }
+
   /**
    * 更新权限开关（Web UI 调用）。
    * 立即热更新所有受影响的运行中 agent，无需销毁重建。

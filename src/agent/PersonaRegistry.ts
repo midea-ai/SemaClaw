@@ -40,6 +40,11 @@ export class PersonaRegistry {
     return Array.from(this.personas.values());
   }
 
+  /** 主动重新扫描目录，刷新内存缓存 */
+  reload(): void {
+    this.loadAll();
+  }
+
   destroy(): void {
     if (this.watcher) {
       this.watcher.close();

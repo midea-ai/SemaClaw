@@ -22,6 +22,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod';
 import type { DispatchState, DispatchParent, DispatchTask } from '../agent/DispatchBridge';
 import { PersonaRegistry } from '../agent/PersonaRegistry';
+import { readDisabledSubagents } from '../subagents/disabled.js';
 
 // TS2589 workaround: MCP SDK zod type instantiation
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -205,8 +206,9 @@ tool(
       }
     }
 
-    // 虚拟 agent personas
-    const personas = personaRegistry?.list() ?? [];
+    // 虚拟 agent personas（过滤已禁用的）
+    const disabledSubagents = readDisabledSubagents();
+    const personas = (personaRegistry?.list() ?? []).filter(p => !disabledSubagents.has(p.name));
     if (personas.length > 0) {
       if (lines.length > 0) lines.push('');
       lines.push('**Virtual Personas:**');

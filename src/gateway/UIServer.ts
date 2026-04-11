@@ -19,6 +19,8 @@ import { loadAllLocalSkills } from '../skills/scan.js';
 import { emitSkillsRefresh } from '../clawhub/signal.js';
 import { searchSkills, getSkillMeta, downloadSkillZip, DEFAULT_REGISTRY } from '../clawhub/client.js';
 import { extractZipToDir, writeSkillOrigin, readLockfile, writeLockfile } from '../clawhub/lockfile.js';
+import { readDisabledSubagents, disableSubagent, enableSubagent } from '../subagents/disabled.js';
+import type { PersonaRegistry } from '../agent/PersonaRegistry';
 import { config } from '../config.js';
 
 const MIME: Record<string, string> = {
@@ -40,9 +42,14 @@ export class UIServer {
   private readonly port: number;
   private readonly distDir: string;
   private wikiManager: WikiManager | null = null;
+  private personaRegistry: PersonaRegistry | null = null;
 
   setWikiManager(wm: WikiManager): void {
     this.wikiManager = wm;
+  }
+
+  setPersonaRegistry(pr: PersonaRegistry): void {
+    this.personaRegistry = pr;
   }
 
   constructor(private readonly agentPool: AgentPool, opts?: { port?: number }) {
@@ -444,6 +451,105 @@ export class UIServer {
       // 写信号文件，通知其他进程（如 CLI daemon）
       await emitSkillsRefresh();
       const disabled = readDisabledSkills();
+      res.writeHead(200, { 'Content-Type': 'application/json' }).end(
+        JSON.stringify({ name, disabled: disabled.has(name) })
+      );
+      return;
+    }
+
+    // ─── Subagents (virtual persona) API ──────────────────────────────────────
+
+    // GET /api/subagents — 返回所有 persona 列表及启用/禁用状态
+    if (urlPath === '/api/subagents' && req.method === 'GET') {
+      this.personaRegistry?.reload();
+      const personas = this.personaRegistry?.list() ?? [];
+      const disabled = readDisabledSubagents();
+      const result = personas.map(p => ({
+        name: p.name,
+        description: p.description,
+        tools: p.tools,
+        model: p.model,
+        maxConcurrent: p.maxConcurrent,
+        filePath: p.filePath,
+        disabled: disabled.has(p.name),
+      }));
+      res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ subagents: result }));
+      return;
+    }
+
+    // GET/PUT /api/subagents/:name/readme — 读取/保存 persona .md 文件原始内容
+    const subagentReadmeMatch = urlPath.match(/^\/api\/subagents\/([^/]+)\/readme$/);
+    if (subagentReadmeMatch) {
+      const name = decodeURIComponent(subagentReadmeMatch[1]);
+      const persona = this.personaRegistry?.get(name);
+      if (!persona) {
+        res.writeHead(404).end('Not found');
+        return;
+      }
+      if (req.method === 'GET') {
+        const content = fs.existsSync(persona.filePath) ? fs.readFileSync(persona.filePath, 'utf8') : '';
+        res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' }).end(content);
+        return;
+      }
+      if (req.method === 'PUT') {
+        const content = await this.readBody(req);
+        fs.writeFileSync(persona.filePath, content, 'utf8');
+        this.personaRegistry?.reload();
+        res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ ok: true }));
+        return;
+      }
+    }
+
+    // POST /api/subagents/create — 创建新 persona .md 文件
+    if (urlPath === '/api/subagents/create' && req.method === 'POST') {
+      const body = await this.readBody(req);
+      const { name, content } = JSON.parse(body) as { name: string; content: string };
+      if (!name || !content) {
+        res.writeHead(400, { 'Content-Type': 'application/json' }).end(JSON.stringify({ error: 'name and content are required' }));
+        return;
+      }
+      // name → filename: 空格替换为连字符，去除不安全字符
+      const filename = name.trim().replace(/\s+/g, '-').replace(/[^a-zA-Z0-9_\-\u4e00-\u9fff]/g, '');
+      if (!filename) {
+        res.writeHead(400, { 'Content-Type': 'application/json' }).end(JSON.stringify({ error: 'Invalid name' }));
+        return;
+      }
+      const filePath = path.join(config.paths.virtualAgentsDir, `${filename}.md`);
+      // 检查文件名冲突
+      if (fs.existsSync(filePath)) {
+        res.writeHead(409, { 'Content-Type': 'application/json' }).end(
+          JSON.stringify({ error: `A persona file "${filename}.md" already exists. Please choose a different name or update the existing file.` })
+        );
+        return;
+      }
+      // 检查 PersonaRegistry 中是否有同名 persona（name 字段可能不等于 filename）
+      if (this.personaRegistry?.get(name)) {
+        res.writeHead(409, { 'Content-Type': 'application/json' }).end(
+          JSON.stringify({ error: `A persona named "${name}" already exists. Please choose a different name.` })
+        );
+        return;
+      }
+      // 确保目录存在
+      if (!fs.existsSync(config.paths.virtualAgentsDir)) {
+        fs.mkdirSync(config.paths.virtualAgentsDir, { recursive: true });
+      }
+      fs.writeFileSync(filePath, content, 'utf-8');
+      this.personaRegistry?.reload();
+      res.writeHead(201, { 'Content-Type': 'application/json' }).end(JSON.stringify({ ok: true, filename }));
+      return;
+    }
+
+    // POST /api/subagents/:name/enable|disable — 切换 persona 启用状态
+    const subagentToggleMatch = urlPath.match(/^\/api\/subagents\/([^/]+)\/(enable|disable)$/);
+    if (subagentToggleMatch && req.method === 'POST') {
+      const name = decodeURIComponent(subagentToggleMatch[1]);
+      const action = subagentToggleMatch[2] as 'enable' | 'disable';
+      if (action === 'enable') {
+        enableSubagent(name);
+      } else {
+        disableSubagent(name);
+      }
+      const disabled = readDisabledSubagents();
       res.writeHead(200, { 'Content-Type': 'application/json' }).end(
         JSON.stringify({ name, disabled: disabled.has(name) })
       );

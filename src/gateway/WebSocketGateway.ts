@@ -224,12 +224,18 @@ export class WebSocketGateway {
 
   /** PermissionBridge 权限请求时调用 */
   notifyPermissionRequest(chatJid: string, requestId: string, payload: PermissionPayload): void {
-    this.broadcast(chatJid, {
+    const msg: OutboundMsg = {
       type: 'permission:request',
       groupJid: chatJid,
       requestId,
       ...payload,
-    });
+    };
+    // 虚拟 agent (virtual:xxx) 没有订阅者，广播给所有 admin 客户端
+    if (chatJid.startsWith('virtual:')) {
+      this.broadcastToAdmins(msg);
+    } else {
+      this.broadcast(chatJid, msg);
+    }
   }
 
   /**
@@ -254,13 +260,18 @@ export class WebSocketGateway {
 
   /** PermissionBridge 权限决策后调用，广播给订阅该群组的所有客户端 */
   notifyPermissionResolved(chatJid: string, requestId: string, optionKey: string, optionLabel: string): void {
-    this.broadcast(chatJid, {
+    const msg: OutboundMsg = {
       type: 'permission:resolved',
       groupJid: chatJid,
       requestId,
       optionKey,
       optionLabel,
-    });
+    };
+    if (chatJid.startsWith('virtual:')) {
+      this.broadcastToAdmins(msg);
+    } else {
+      this.broadcast(chatJid, msg);
+    }
   }
 
   /** PermissionBridge 问答决策后调用，广播给订阅该群组的所有客户端 */

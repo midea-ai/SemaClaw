@@ -12,6 +12,8 @@ import * as path from 'path';
 import { SemaCore } from 'sema-core';
 import type { MessageCompleteData, StateUpdateData, SessionErrorData, TodosUpdateData } from 'sema-core/event';
 import type { PersonaConfig } from './PersonaRegistry';
+import type { PermissionBridge } from './PermissionBridge';
+import type { GroupBinding } from '../types';
 import { config } from '../config';
 import { readDisabledSkills } from '../skills/disabled.js';
 import { expandSkillsDir } from '../skills/expand.js';
@@ -54,6 +56,8 @@ interface RunningInstance {
   tempDir: string;
   /** cancelTask 已提前递减 activeCounts，finally 中不再重复递减 */
   countDecrementedEarly: boolean;
+  /** PermissionBridge 注册的监听器清理函数 */
+  cleanupPermission?: () => void;
 }
 
 export class VirtualWorkerPool {
@@ -62,9 +66,18 @@ export class VirtualWorkerPool {
   private todosNotify: TodosNotifyFn | null = null;
   /** 所有运行中的虚拟实例（按 taskId 索引） */
   private runningInstances = new Map<string, RunningInstance>();
+  /** 由外部注入：权限桥接（将虚拟 agent 的权限请求转发到前端） */
+  private permissionBridge: PermissionBridge | null = null;
+  /** 由外部注入：获取当前是否跳过权限审批（随主 agent 配置） */
+  private getSkipPerms: (() => boolean) | null = null;
 
   setTodosNotify(fn: TodosNotifyFn): void {
     this.todosNotify = fn;
+  }
+
+  setPermissionBridge(bridge: PermissionBridge, getSkipPerms: () => boolean): void {
+    this.permissionBridge = bridge;
+    this.getSkipPerms = getSkipPerms;
   }
 
   async run(
@@ -115,6 +128,9 @@ export class VirtualWorkerPool {
         ...expandSkillsDir(path.join(workspaceDir, 'skills'), 'workspace', _disabled),
       ];
 
+      // 权限配置：随主 agent 配置
+      const skipPerms = this.getSkipPerms?.() ?? true;
+
       // Create temporary SemaCore instance (no MCP servers)
       core = new SemaCore({
         instanceId,
@@ -124,9 +140,9 @@ export class VirtualWorkerPool {
         useTools,
         logLevel: 'warn',
         skillsExtraDirs,
-        skipFileEditPermission: true,
-        skipBashExecPermission: true,
-        skipSkillPermission: true,
+        skipFileEditPermission: skipPerms,
+        skipBashExecPermission: skipPerms,
+        skipSkillPermission: skipPerms,
         skipMCPToolPermission: true,
         skipMCPInit: true,
       });
@@ -148,9 +164,31 @@ export class VirtualWorkerPool {
         if (sessionTimer) clearTimeout(sessionTimer);
       }
 
-      // Register running instance for cancel tracking
+      // 绑定 PermissionBridge（权限请求转发到前端，使用 virtual:{taskId} 作为 jid）
       const taskId = options?.taskId ?? instanceId;
-      const instance: RunningInstance = { taskId, personaName: persona.name, core, abortController, tempDir, countDecrementedEarly: false };
+      let cleanupPermission: (() => void) | undefined;
+      if (this.permissionBridge && !skipPerms) {
+        const virtualJid = `virtual:${taskId}`;
+        const virtualBinding: GroupBinding = {
+          jid: virtualJid,
+          folder: `virtual-${instanceId}`,
+          name: persona.name,
+          channel: '',
+          isAdmin: false,
+          requiresTrigger: false,
+          allowedTools: null,
+          allowedPaths: null,
+          allowedWorkDirs: null,
+          botToken: null,
+          maxMessages: null,
+          lastActive: null,
+          addedAt: new Date().toISOString(),
+        };
+        cleanupPermission = this.permissionBridge.bindCore(core, virtualBinding);
+      }
+
+      // Register running instance for cancel tracking
+      const instance: RunningInstance = { taskId, personaName: persona.name, core, abortController, tempDir, countDecrementedEarly: false, cleanupPermission };
       this.runningInstances.set(taskId, instance);
 
       // 注册 todos:update 监听，转发到 WsGateway（使用 virtual:{taskId} 作为 jid）
@@ -189,6 +227,11 @@ export class VirtualWorkerPool {
         } else {
           this.activeCounts.set(persona.name, count - 1);
         }
+      }
+
+      // 清理 PermissionBridge 监听器
+      if (inst?.cleanupPermission) {
+        try { inst.cleanupPermission(); } catch { /* ignore */ }
       }
 
       // Dispose core if not already done (error/cancel path)

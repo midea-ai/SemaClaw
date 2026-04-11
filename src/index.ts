@@ -57,6 +57,7 @@ import { config } from './config';
 import { DispatchBridge } from './agent/DispatchBridge';
 import { PersonaRegistry } from './agent/PersonaRegistry';
 import { VirtualWorkerPool } from './agent/VirtualWorkerPool';
+import { installBuiltinPersonas } from './subagents/builtin-personas';
 import { WikiManager } from './wiki/WikiManager';
 
 async function main(): Promise<void> {
@@ -382,8 +383,13 @@ async function main(): Promise<void> {
   dispatchBridge.start();
 
   // ===== 9.1 虚拟 Agent 注入（Phase 2 DAG 集成）=====
+  installBuiltinPersonas(config.paths.virtualAgentsDir);
   const personaRegistry = new PersonaRegistry(config.paths.virtualAgentsDir);
   const virtualWorkerPool = new VirtualWorkerPool();
+  virtualWorkerPool.setPermissionBridge(
+    agentPool.getPermissionBridge(),
+    () => agentPool.getSkipPermsForVirtual(),
+  );
   dispatchBridge.setVirtualWorkerPool(personaRegistry, virtualWorkerPool);
 
   agentPool.setGroupQueue(groupQueue);
@@ -416,6 +422,7 @@ async function main(): Promise<void> {
 
   const uiServer = new UIServer(agentPool);
   uiServer.setWikiManager(wikiManager);
+  uiServer.setPersonaRegistry(personaRegistry);
   await uiServer.start();
 
   console.log('[SemaClaw] Ready');
