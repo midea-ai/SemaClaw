@@ -96,6 +96,22 @@ For a complete walkthrough including environment variables, CLI usage, runtime l
 
 ---
 
+## Prerequisites for Linux
+
+SemaClaw includes native modules (`better-sqlite3`, `nodejieba`, etc.) that require a C++ toolchain to compile. macOS ships with Xcode Command Line Tools; Linux users should install the following first:
+
+```bash
+# Ubuntu / Debian
+sudo apt install -y build-essential python3 git ripgrep
+
+# Fedora / RHEL
+sudo dnf install -y gcc-c++ make python3 git ripgrep
+```
+
+> **ripgrep** is recommended — sema-core uses it for code search and prefers the system `rg` over the bundled optional `@vscode/ripgrep`, which may fail to install on some platforms.
+
+---
+
 ## Project Structure
 
 ```

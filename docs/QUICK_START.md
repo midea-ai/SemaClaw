@@ -83,7 +83,22 @@ semaclaw/
 
 ## 快速开始
 
-### 1. 安装依赖
+### 1. 系统前置依赖
+
+SemaClaw 依赖若干 native 模块（`better-sqlite3`、`nodejieba` 等），安装时需要 C++ 编译工具链。macOS 通常已预装 Xcode Command Line Tools，**Linux 用户**请先安装以下依赖：
+
+```bash
+# Ubuntu / Debian
+sudo apt update
+sudo apt install -y build-essential python3 git ripgrep
+
+# Fedora / RHEL
+sudo dnf install -y gcc-c++ make python3 git ripgrep
+```
+
+> **关于 ripgrep**：`sema-core` 运行时依赖 ripgrep 进行代码搜索。它会优先使用系统 PATH 中的 `rg`，找不到时再 fallback 到内置的 `@vscode/ripgrep`（该包为 optional dependency，在部分环境下可能安装失败）。**建议在 Linux 上通过包管理器预装 `ripgrep`** 以避免安装问题。
+
+### 2. 安装依赖
 
 **方式 A：普通用户（推荐）**
 
@@ -123,7 +138,7 @@ npm run build
 npm run build:web
 ```
 
-### 2. 配置环境变量
+### 3. 配置环境变量
 
 复制 `.env.example` 为 `.env`，至少填写：
 
@@ -188,7 +203,7 @@ SEMACLAW_SEARCH_MAX_RESULTS=5
 SEMACLAW_SEARCH_MIN_SCORE=0.5
 ```
 
-### 3. 启动
+### 4. 启动
 
 ```bash
 # 开发模式（tsx 热加载）
@@ -201,7 +216,7 @@ npm run build && npm start
 npm run dev:web
 ```
 
-### 4. CLI
+### 5. CLI
 
 ```bash
 # 开发期间（无需全局安装）

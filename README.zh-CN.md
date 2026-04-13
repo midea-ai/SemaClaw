@@ -96,6 +96,22 @@ npm start
 
 ---
 
+## Linux 前置依赖
+
+SemaClaw 包含若干 native 模块（`better-sqlite3`、`nodejieba` 等），安装时需要 C++ 编译工具链。macOS 通常已预装 Xcode Command Line Tools，Linux 用户请先安装以下依赖：
+
+```bash
+# Ubuntu / Debian
+sudo apt install -y build-essential python3 git ripgrep
+
+# Fedora / RHEL
+sudo dnf install -y gcc-c++ make python3 git ripgrep
+```
+
+> **ripgrep** 建议预装 — sema-core 运行时使用 ripgrep 进行代码搜索，会优先使用系统 PATH 中的 `rg`，找不到时才 fallback 到内置的可选依赖 `@vscode/ripgrep`（该包在部分平台可能安装失败）。
+
+---
+
 ## 项目结构
 
 ```
