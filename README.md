@@ -26,7 +26,7 @@
   <img src="https://github.com/midea-ai/SemaClaw/releases/download/v0.1.1-preview/SemaClaw-demo.GIF" alt="SemaClaw Demo" width="720" />
 </p>
 
-*SemaClaw analyzed its own source code and generated the intro video above — powered by frontend-slides and remotion skills (DeepSeek-Chat for all preceding steps, Claude Sonnet 4.6 for Remotion animation coding).* [Watch full demo video](https://midea-ai.github.io/SemaClaw/assets/SemaClaw-demo.mp4)
+*SemaClaw analyzed its own source code and generated the intro video above — powered by [frontend-slides](https://github.com/zarazhangrui/frontend-slides) and [remotion](https://github.com/remotion-dev/remotion) skills (DeepSeek-Chat for all preceding steps, Claude Sonnet 4.6 for Remotion animation coding).* [Watch full demo video](https://midea-ai.github.io/SemaClaw/assets/SemaClaw-demo.mp4)
 
 ## Highlights
 
