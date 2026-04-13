@@ -18,9 +18,13 @@
   <strong>English</strong> | <a href="./README.zh-CN.md">简体中文</a>
 </p>
 
-SemaClaw is a general-purpose engineering harness for building personal AI agents. It is built on top of a reusable agent runtime ([sema-code-core](https://github.com/midea-ai/sema-code-core)) and provides the surrounding machinery — permissions, memory, scheduling, multi-agent orchestration, channel adapters, and a Web UI — that turns a raw runtime into a usable personal AI system. It is also a reference implementation and starting point for the community to evaluate and improve on the engineering decisions behind it.
+[SemaClaw](https://github.com/midea-ai/SemaClaw) is a general-purpose engineering harness for building personal AI agents. It is built on top of a reusable agent runtime ([sema-code-core](https://github.com/midea-ai/sema-code-core)) and provides the surrounding machinery — permissions, memory, scheduling, multi-agent orchestration, channel adapters, and a Web UI — that turns a raw runtime into a usable personal AI system. It is also a reference implementation and starting point for the community to evaluate and improve on the engineering decisions behind it.
 
 ---
+
+<p align="center">
+  <video src="https://github.com/midea-ai/SemaClaw/releases/download/v0.1.1-preview/SemaClaw-demo.mp4" controls width="720"></video>
+</p>
 
 ## Highlights
 

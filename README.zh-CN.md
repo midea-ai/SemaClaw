@@ -18,9 +18,13 @@
   <a href="./README.md">English</a> | <strong>简体中文</strong>
 </p>
 
-SemaClaw 是一个面向个人 AI Agent 的通用工程，构建在可复用的 Agent 运行时（[sema-code-core](https://github.com/midea-ai/sema-code-core)）之上。它提供了将原始运行时变成一个真正可用的个人 AI 系统所需的全部周边设施 —— 权限管理、记忆系统、定时任务、多 Agent 编排、频道适配、Web UI 等等。它同时也是一个参考实现，是社区评估并改进其底层工程决策的起点。
+[SemaClaw](https://github.com/midea-ai/SemaClaw) 是一个面向个人 AI Agent 的通用工程，构建在可复用的 Agent 运行时（[sema-code-core](https://github.com/midea-ai/sema-code-core)）之上。它提供了将原始运行时变成一个真正可用的个人 AI 系统所需的全部周边设施 —— 权限管理、记忆系统、定时任务、多 Agent 编排、频道适配、Web UI 等等。它同时也是一个参考实现，是社区评估并改进其底层工程决策的起点。
 
 ---
+
+<p align="center">
+  <video src="https://github.com/midea-ai/SemaClaw/releases/download/v0.1.1-preview/SemaClaw-demo.mp4" controls width="720"></video>
+</p>
 
 ## 核心亮点
 
