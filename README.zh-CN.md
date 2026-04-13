@@ -23,7 +23,7 @@
 ---
 
 <p align="center">
-  <video src="https://github.com/midea-ai/SemaClaw/releases/download/v0.1.1-preview/SemaClaw-demo.mp4" controls width="720"></video>
+  <video src="https://midea-ai.github.io/SemaClaw/assets/SemaClaw-demo.mp4" controls width="720"></video>
 </p>
 
 ## 核心亮点
