@@ -23,7 +23,9 @@
 ---
 
 <p align="center">
-  <video src="https://midea-ai.github.io/SemaClaw/assets/SemaClaw-demo.mp4" controls width="720"></video>
+  <img src="https://github.com/midea-ai/SemaClaw/releases/download/v0.1.1-preview/SemaClaw-demo.GIF" alt="SemaClaw Demo" width="720" />
+  <br />
+  <a href="https://midea-ai.github.io/SemaClaw/assets/SemaClaw-demo.mp4">Watch full demo video</a>
 </p>
 
 ## Highlights
