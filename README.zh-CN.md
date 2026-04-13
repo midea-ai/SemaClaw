@@ -24,9 +24,9 @@
 
 <p align="center">
   <img src="https://github.com/midea-ai/SemaClaw/releases/download/v0.1.1-preview/SemaClaw-demo.GIF" alt="SemaClaw Demo" width="720" />
-  <br />
-  <a href="https://midea-ai.github.io/SemaClaw/assets/SemaClaw-demo.mp4">观看完整演示视频</a>
 </p>
+
+*SemaClaw 分析自身源码并自动生成了以上介绍动画 — 基于 frontend-slides 和 remotion skills（前序步骤使用 DeepSeek-Chat，Remotion 动画代码生成使用 Claude Sonnet 4.6）。* [观看完整演示视频](https://midea-ai.github.io/SemaClaw/assets/SemaClaw-demo.mp4)
 
 ## 核心亮点
 
