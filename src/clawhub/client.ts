@@ -9,7 +9,7 @@ import * as https from 'node:https'
 import * as http from 'node:http'
 import { readStoredToken } from './auth.js'
 
-export const DEFAULT_REGISTRY = 'https://clawhub.ai'
+export const DEFAULT_REGISTRY = process.env['CLAWHUB_REGISTRY']?.trim() || 'https://lightmake.site'
 const REQUEST_TIMEOUT_MS = 15_000
 
 /** 优先使用显式传入的 token，否则读取本地存储的 token */
