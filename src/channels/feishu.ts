@@ -100,8 +100,6 @@ function escapeRegExp(raw: string): string {
 
 /** 飞书建议 4000 字符分片 */
 const FEISHU_MAX_LEN = 4000;
-/** 飞书卡片 markdown 最大长度 */
-const FEISHU_CARD_MAX_LEN = 20_000;
 
 /** fetchBotInfo 网络超时，超时后跳过该 app，不阻塞启动流程 */
 const APP_INIT_TIMEOUT_MS = 15_000;
@@ -302,14 +300,10 @@ export class FeishuChannel implements IChannel {
       value: { action: btn.callbackData },
     }));
 
-    const truncatedText = text.length > FEISHU_CARD_MAX_LEN
-      ? text.slice(0, FEISHU_CARD_MAX_LEN) + '\n…(content truncated)'
-      : text;
-
     const card = {
       config: { wide_screen_mode: true },
       elements: [
-        { tag: 'markdown', content: truncatedText },
+        { tag: 'markdown', content: text },
         {
           tag: 'action',
           actions,

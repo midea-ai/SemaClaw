@@ -31,11 +31,6 @@ const SCRIPT_TIMEOUT_MS = 60_000;
 /** 脚本输出最大长度（Telegram 单条限 4096，留 buffer） */
 const SCRIPT_OUTPUT_MAX = 3_500;
 
-/** 跨平台 shell：Windows 用系统默认 cmd，Unix 用 bash */
-const SCRIPT_SHELL: string = process.platform === 'win32'
-  ? (process.env.COMSPEC || 'cmd.exe')
-  : '/bin/bash';
-
 export class TaskScheduler {
   private timer: NodeJS.Timeout | null = null;
   private wsGateway: WebSocketGateway | null = null;
@@ -177,16 +172,16 @@ export class TaskScheduler {
   }
 
   /**
-   * script：执行脚本命令，将 stdout/stderr 直接发送到频道和 Web UI。
+   * script：执行 bash 命令，将 stdout/stderr 直接发送到频道和 Web UI。
    * 返回结果摘要（用于 task_run_logs）。
-   * 命令通过系统 shell 执行（Windows: cmd.exe, Unix: bash），支持任意解释器。
+   * 命令通过 bash shell 执行，支持任意解释器（python3、node 等），不做路径限制。
    */
   private async runScript(task: ScheduledTask, group: GroupBinding): Promise<string> {
     if (!task.scriptCommand) {
       throw new Error(`Task ${task.id}: script_command is required for ${task.contextMode} mode`);
     }
     const { stdout, stderr } = await execAsync(task.scriptCommand, {
-      shell: SCRIPT_SHELL,
+      shell: '/bin/bash',
       timeout: SCRIPT_TIMEOUT_MS,
     });
     const output = [stdout, stderr].filter(Boolean).join('\n').trim() || '(no output)';
@@ -198,7 +193,7 @@ export class TaskScheduler {
   }
 
   /**
-   * script-agent：执行脚本命令，将输出注入 prompt，交给 isolated Agent 格式化汇报。
+   * script-agent：执行 bash 命令，将输出注入 prompt，交给 isolated Agent 格式化汇报。
    * isolated agent 已设置 skipBashExecPermission=true，无需用户审批。
    */
   private async runScriptAgent(task: ScheduledTask, group: GroupBinding): Promise<void> {
@@ -206,7 +201,7 @@ export class TaskScheduler {
       throw new Error(`Task ${task.id}: script_command is required for ${task.contextMode} mode`);
     }
     const { stdout, stderr } = await execAsync(task.scriptCommand, {
-      shell: SCRIPT_SHELL,
+      shell: '/bin/bash',
       timeout: SCRIPT_TIMEOUT_MS,
     });
     const output = [stdout, stderr].filter(Boolean).join('\n').trim() || '(no output)';

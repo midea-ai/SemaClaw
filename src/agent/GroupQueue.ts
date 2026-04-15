@@ -11,9 +11,6 @@ import { config } from '../config';
 
 type Task = () => Promise<void>;
 
-/** 单个 jid 最大排队任务数，防止洪泛导致内存溢出 */
-const MAX_QUEUE_PER_JID = 50;
-
 export class GroupQueue {
   /** jid → 等待执行的任务队列 */
   private queues = new Map<string, Task[]>();
@@ -36,21 +33,15 @@ export class GroupQueue {
    * 向指定群组的队列追加任务。
    * 若群组当前无任务正在处理，立即触发 drain。
    */
-  enqueue(jid: string, task: Task): boolean {
+  enqueue(jid: string, task: Task): void {
     if (!this.queues.has(jid)) this.queues.set(jid, []);
-    const q = this.queues.get(jid)!;
-    if (q.length >= MAX_QUEUE_PER_JID) {
-      console.warn(`[GroupQueue] Queue overflow for ${jid} (max=${MAX_QUEUE_PER_JID}), dropping task`);
-      return false;
-    }
-    q.push(task);
+    this.queues.get(jid)!.push(task);
 
     if (!this.running.has(jid)) {
       this.drain(jid).catch((err) =>
         console.error(`[GroupQueue] drain error for ${jid}:`, err)
       );
     }
-    return true;
   }
 
   /**

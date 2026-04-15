@@ -1,8 +1,5 @@
 import type { EmbeddingProvider } from './embedding';
 
-/** 单次 embedding API 调用超时（ms） */
-const FETCH_TIMEOUT_MS = 30_000;
-
 // ===== OpenAI Provider =====
 
 class OpenAIEmbeddingProvider implements EmbeddingProvider {
@@ -42,7 +39,6 @@ class OpenAIEmbeddingProvider implements EmbeddingProvider {
             model: this.model,
             input: texts,
           }),
-          signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
         });
 
         if (!res.ok) {
@@ -126,7 +122,6 @@ class OpenRouterEmbeddingProvider implements EmbeddingProvider {
             model: this.model,
             input: text,
           }),
-          signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
         });
 
         if (!res.ok) {
@@ -201,7 +196,6 @@ class OllamaEmbeddingProvider implements EmbeddingProvider {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ model: this.model, prompt: text }),
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
     if (!res.ok) {
       const body = await res.text().catch(() => '');
