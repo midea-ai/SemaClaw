@@ -226,7 +226,11 @@ export class TelegramChannel implements IChannel {
       keyboard.text(btn.label, btn.callbackData).row();
     }
 
-    await entry.bot.api.sendMessage(chatId, text, { reply_markup: keyboard });
+    const parts = splitMessage(text);
+    for (let i = 0; i < parts.length - 1; i++) {
+      await entry.bot.api.sendMessage(chatId, parts[i]);
+    }
+    await entry.bot.api.sendMessage(chatId, parts[parts.length - 1], { reply_markup: keyboard });
   }
 
   /** 注册内联按钮回调处理器 */

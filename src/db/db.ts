@@ -19,6 +19,11 @@ import type { GroupBinding, StoredMessage, ScheduledTask, TaskRunLog } from '../
 import { config } from '../config';
 import { applyMemorySchema, buildModelKey } from '../memory/memory-schema';
 
+function safeJsonParse<T>(raw: string | null): T | null {
+  if (!raw) return null;
+  try { return JSON.parse(raw) as T; } catch { return null; }
+}
+
 // ===== 初始化 =====
 
 let _db: Database.Database | null = null;
@@ -259,15 +264,9 @@ function rowToGroup(row: Record<string, unknown>): GroupBinding {
     channel: (row.channel as string) ?? '',
     isAdmin: Boolean(row.is_admin),
     requiresTrigger: Boolean(row.requires_trigger),
-    allowedTools: row.allowed_tools
-      ? (JSON.parse(row.allowed_tools as string) as string[])
-      : null,
-    allowedPaths: row.allowed_paths
-      ? (JSON.parse(row.allowed_paths as string) as string[])
-      : null,
-    allowedWorkDirs: row.allowed_work_dirs
-      ? (JSON.parse(row.allowed_work_dirs as string) as string[])
-      : null,
+    allowedTools: safeJsonParse<string[]>(row.allowed_tools as string | null),
+    allowedPaths: safeJsonParse<string[]>(row.allowed_paths as string | null),
+    allowedWorkDirs: safeJsonParse<string[]>(row.allowed_work_dirs as string | null),
     botToken: (row.bot_token as string | null) ?? null,
     maxMessages: (row.max_messages as number | null) ?? null,
     lastActive: (row.last_active as string | null) ?? null,

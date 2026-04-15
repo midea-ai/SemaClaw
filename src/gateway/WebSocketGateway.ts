@@ -371,6 +371,7 @@ export class WebSocketGateway {
 
     // 无 token 配置时自动认证（本地开发）
     if (!this.token) {
+      console.warn('[WsGateway] GATEWAY_TOKEN not set — client auto-authenticated. Set GATEWAY_TOKEN in .env for production.');
       client.authenticated = true;
       this.send(client, { type: 'auth:ok' });
     }
@@ -807,6 +808,7 @@ export class WebSocketGateway {
 
       case 'agent:control': {
         if (!this.requireAuth(client)) return;
+        if (!this.requireAdmin(client)) return;
         const groupJid = String(msg.groupJid ?? '');
         const action = String(msg.action ?? '');
         if (!groupJid || !action) {

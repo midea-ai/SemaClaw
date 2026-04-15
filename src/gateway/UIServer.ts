@@ -84,11 +84,21 @@ export class UIServer {
     return new Promise((resolve) => this.server.close(() => resolve()));
   }
 
-  private readBody(req: http.IncomingMessage): Promise<string> {
-    return new Promise((resolve) => {
+  private readBody(req: http.IncomingMessage, maxBytes = 1024 * 1024): Promise<string> {
+    return new Promise((resolve, reject) => {
       let data = '';
-      req.on('data', chunk => { data += String(chunk); });
+      let bytes = 0;
+      req.on('data', (chunk: Buffer) => {
+        bytes += chunk.length;
+        if (bytes > maxBytes) {
+          req.destroy();
+          reject(new Error(`Request body too large (>${maxBytes} bytes)`));
+          return;
+        }
+        data += String(chunk);
+      });
       req.on('end', () => resolve(data));
+      req.on('error', reject);
     });
   }
 
@@ -154,8 +164,11 @@ export class UIServer {
   private async handle(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     const urlPath = (req.url ?? '/').split('?')[0];
 
-    // CORS for dev proxy
-    res.setHeader('Access-Control-Allow-Origin', '*');
+    // CORS: 默认允许本机访问；可通过 CORS_ORIGIN 环境变量覆盖
+    const allowedOrigin = process.env.CORS_ORIGIN ?? '*';
+    res.setHeader('Access-Control-Allow-Origin', allowedOrigin);
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
     // CORS preflight
     if (req.method === 'OPTIONS') {
@@ -177,7 +190,11 @@ export class UIServer {
     if (urlPath === '/api/llm-config') {
       if (req.method === 'GET') {
         const stored = loadLLMConfigs();
-        // 附带 sema-core 当前实际使用的模型（用于 UI 显示）
+        // 脱敏 apiKey：只保留末尾 4 位用于辨认
+        const maskedConfigs = stored.configs.map(c => ({
+          ...c,
+          apiKey: c.apiKey ? `${'*'.repeat(Math.max(0, c.apiKey.length - 4))}${c.apiKey.slice(-4)}` : '',
+        }));
         const semaProfile = (() => {
           try { return getModelManager().getModel('main'); } catch { return null; }
         })();
@@ -187,6 +204,7 @@ export class UIServer {
         res.writeHead(200, { 'Content-Type': 'application/json' }).end(
           JSON.stringify({
             ...stored,
+            configs: maskedConfigs,
             semaModel: semaProfile ? { modelName: semaProfile.modelName, provider: semaProfile.provider } : null,
             semaQuickModel: semaQuickProfile ? { modelName: semaQuickProfile.modelName, provider: semaQuickProfile.provider } : null,
             thinkingEnabled: this.agentPool.getThinkingEnabled(),

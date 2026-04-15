@@ -470,6 +470,18 @@ async function main(): Promise<void> {
     }
 
     try {
+      dispatchBridge.stop();
+    } catch (err) {
+      console.error('[SemaClaw] Error stopping DispatchBridge:', err);
+    }
+
+    try {
+      MemoryManager.getInstance().destroy();
+    } catch (err) {
+      console.warn('[SemaClaw] MemoryManager cleanup skipped:', (err as Error).message ?? err);
+    }
+
+    try {
       await wsGateway.stop();
     } catch (err) {
       console.error('[SemaClaw] Error stopping WsGateway:', err);
@@ -481,12 +493,25 @@ async function main(): Promise<void> {
       console.error('[SemaClaw] Error stopping UIServer:', err);
     }
 
+    try {
+      db.close();
+    } catch (err) {
+      console.error('[SemaClaw] Error closing DB:', err);
+    }
+
     console.log('[SemaClaw] Shutdown complete');
-    process.exit(0);
   };
 
-  process.once('SIGINT', () => shutdown('SIGINT'));
-  process.once('SIGTERM', () => shutdown('SIGTERM'));
+  process.once('SIGINT', () => { shutdown('SIGINT').then(() => process.exit(0)).catch(() => process.exit(1)); });
+  process.once('SIGTERM', () => { shutdown('SIGTERM').then(() => process.exit(0)).catch(() => process.exit(1)); });
+
+  process.on('unhandledRejection', (reason) => {
+    console.error('[SemaClaw] Unhandled Promise rejection:', reason);
+  });
+  process.on('uncaughtException', (err) => {
+    console.error('[SemaClaw] Uncaught exception:', err);
+    shutdown('uncaughtException').finally(() => process.exit(1));
+  });
 }
 
 main().catch((err) => {
