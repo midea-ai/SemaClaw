@@ -177,9 +177,9 @@ export class TaskScheduler {
   }
 
   /**
-   * script：执行 bash 命令，将 stdout/stderr 直接发送到频道和 Web UI。
+   * script：执行 shell 命令，将 stdout/stderr 直接发送到频道和 Web UI。
    * 返回结果摘要（用于 task_run_logs）。
-   * 命令通过 bash shell 执行，支持任意解释器（python3、node 等），不做路径限制。
+   * Linux/macOS 通过 /bin/bash 执行，Windows 通过 cmd.exe 执行。支持任意解释器（python3、node 等），不做路径限制。
    */
   private async runScript(task: ScheduledTask, group: GroupBinding): Promise<string> {
     if (!task.scriptCommand) {
