@@ -35,6 +35,7 @@ import type { GroupQueue } from './GroupQueue';
 import { getSkillsReloadSignalPath } from '../clawhub/signal.js';
 import { buildPromptForGroup } from './SessionBridge';
 import { setLastAgentTimestamp } from '../db/db';
+import { loadAndResolveHookConfig } from '../hooks/HookConfigLoader';
 
 /** Agent 响应回调：由 MessageRouter 提供，发送消息回频道 */
 export type SendReply = (
@@ -521,6 +522,10 @@ export class AgentPool {
       ? binding.allowedTools.filter(t => !EXCLUDED_TOOLS.includes(t))
       : ALL_POOLED_TOOLS
 
+    // 加载 hook 配置（全局 ~/.semaclaw/ + workspace）
+    const globalConfigDir = path.dirname(config.paths.globalConfigPath);
+    const { hookConfig, hookEnv } = loadAndResolveHookConfig(globalConfigDir, workingDir);
+
     memSnap('before new SemaCore');
     const core = new SemaCore({
       instanceId: binding.folder,
@@ -535,7 +540,8 @@ export class AgentPool {
       skipSkillPermission: skipPerms,
       skipMCPToolPermission: true,
       skipMCPInit: true, // AgentPool 清空 mcp.json 后手动 addOrUpdateMCPServer，跳过 init 避免全局 MCP 并发卡死
-    });
+      ...(hookConfig ? { hooks: hookConfig, hookEnv } : {}),
+    } as any);
     memSnap('after new SemaCore');
 
     const cleanupPermission = this.permissionBridge.bindCore(core, binding);
