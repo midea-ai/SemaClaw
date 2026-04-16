@@ -26,6 +26,11 @@ import type { WebSocketGateway } from '../gateway/WebSocketGateway';
 
 const execAsync = promisify(exec);
 
+/** 跨平台 shell：Windows 用 cmd.exe，其他系统固定 /bin/bash */
+const SCRIPT_SHELL: string = process.platform === 'win32'
+  ? (process.env.COMSPEC || 'cmd.exe')
+  : '/bin/bash';
+
 /** 脚本执行超时（ms） */
 const SCRIPT_TIMEOUT_MS = 60_000;
 /** 脚本输出最大长度（Telegram 单条限 4096，留 buffer） */
@@ -181,7 +186,7 @@ export class TaskScheduler {
       throw new Error(`Task ${task.id}: script_command is required for ${task.contextMode} mode`);
     }
     const { stdout, stderr } = await execAsync(task.scriptCommand, {
-      shell: '/bin/bash',
+      shell: SCRIPT_SHELL,
       timeout: SCRIPT_TIMEOUT_MS,
     });
     const output = [stdout, stderr].filter(Boolean).join('\n').trim() || '(no output)';
@@ -193,7 +198,7 @@ export class TaskScheduler {
   }
 
   /**
-   * script-agent：执行 bash 命令，将输出注入 prompt，交给 isolated Agent 格式化汇报。
+   * script-agent：执行脚本命令，将输出注入 prompt，交给 isolated Agent 格式化汇报。
    * isolated agent 已设置 skipBashExecPermission=true，无需用户审批。
    */
   private async runScriptAgent(task: ScheduledTask, group: GroupBinding): Promise<void> {
@@ -201,7 +206,7 @@ export class TaskScheduler {
       throw new Error(`Task ${task.id}: script_command is required for ${task.contextMode} mode`);
     }
     const { stdout, stderr } = await execAsync(task.scriptCommand, {
-      shell: '/bin/bash',
+      shell: SCRIPT_SHELL,
       timeout: SCRIPT_TIMEOUT_MS,
     });
     const output = [stdout, stderr].filter(Boolean).join('\n').trim() || '(no output)';
