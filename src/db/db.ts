@@ -123,7 +123,7 @@ function applySchema(db: Database.Database): void {
       schedule_type  TEXT NOT NULL,     -- cron | interval | once
       schedule_value TEXT NOT NULL,
       context_mode   TEXT NOT NULL DEFAULT 'isolated',  -- isolated | group | notify | script | script-agent
-      script_path    TEXT,             -- script / script-agent 模式：存储 bash 命令字符串
+      script_path    TEXT,             -- script / script-agent 模式：存储 shell 命令字符串
       next_run       TEXT,
       last_run       TEXT,
       last_result    TEXT,              -- 截断至 500 字

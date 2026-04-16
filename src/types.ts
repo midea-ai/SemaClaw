@@ -170,7 +170,7 @@ export interface ScheduledTask {
   scheduleType: 'cron' | 'interval' | 'once';
   scheduleValue: string;
   contextMode: 'isolated' | 'group' | 'notify' | 'script' | 'script-agent';
-  /** script / script-agent 模式：要执行的 bash 命令（如 "python3 /path/to/script.py" 或 "bash check.sh"） */
+  /** script / script-agent 模式：要执行的 shell 命令（如 "python3 /path/to/script.py"） */
   scriptCommand: string | null;
   nextRun: string | null;
   lastRun: string | null;
