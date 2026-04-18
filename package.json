@@ -1,6 +1,6 @@
 {
   "name": "semaclaw",
-  "version": "0.1.1",
+  "version": "0.1.2-beta.6",
   "description": "Multi-group AI gateway built on sema-code-core",
   "license": "MIT",
   "author": "AIRC Sema Team",
@@ -23,7 +23,7 @@
     "README.md",
     "LICENSE"
   ],
-  "bundleDependencies": [
+    "bundleDependencies": [
     "sema-core"
   ],
   "scripts": {

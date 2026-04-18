@@ -91,7 +91,7 @@ npm start
 |---|---|
 | [快速开始与使用指南](docs/QUICK_START.md) | 安装、配置、CLI 命令、运行时布局、MCP 工具说明 |
 | [远程访问指南](docs/REMOTE_ACCESS.md) | 通过反向代理（Nginx / Caddy）安全暴露 Web UI |
-| 技术报告 | *即将发布* |
+| [技术报告](https://arxiv.org/abs/2604.11548) | SemaClaw: A Step Towards General-Purpose Personal AI Agents through Harness Engineering |
 | [贡献指南](CONTRIBUTING.md) | *即将发布* |
 
 ---
