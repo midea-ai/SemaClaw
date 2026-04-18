@@ -18,10 +18,11 @@ export function App() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dispatchParents, ws.groups.length]);
 
-  // Auto-select first group when list loads
+  // Auto-select admin (main) group on first load; fall back to first group if missing
   useEffect(() => {
     if (!selectedJid && ws.groups.length > 0) {
-      const jid = ws.groups[0].jid;
+      const admin = ws.groups.find(g => g.isAdmin);
+      const jid = (admin ?? ws.groups[0]).jid;
       setSelectedJid(jid);
       if (!ws.subscribed.has(jid)) ws.subscribe(jid);
     }

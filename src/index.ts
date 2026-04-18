@@ -41,7 +41,7 @@ import * as os from 'os';
 
 import { runSetupIfNeeded } from './setup';
 import { initDb } from './db/db';
-import { GroupManager, ensureAdminGroup, ensureWechatAdminGroup, syncGroupsFromConfig, getFeishuApps, getQQApps, getWechatAccounts, getTelegramBots, loadLLMConfigs } from './gateway/GroupManager';
+import { GroupManager, ensureAdminGroup, ensureWechatAdminGroup, ensureAgentDirs, syncGroupsFromConfig, getFeishuApps, getQQApps, getWechatAccounts, getTelegramBots, loadLLMConfigs } from './gateway/GroupManager';
 import { getModelManager } from 'sema-core';
 import { TelegramChannel } from './channels/telegram';
 import { FeishuChannel } from './channels/feishu';
@@ -87,6 +87,9 @@ async function main(): Promise<void> {
   console.log(`[SemaClaw] MemoryManager initialized (embedding: ${config.memory.embeddingProvider})`);
 
   // ===== 2. GroupManager =====
+  // 确保 main agent 骨架存在（缺失则建空目录 + SOUL.md/MEMORY.md 模板），
+  // 避免用户误删后没有任何 group 拥有 isAdmin 权限
+  ensureAgentDirs('main');
   const groupManager = new GroupManager();
   // ensureAdminGroup 在 TelegramChannel connect 后调用（需要 botUserId）
   const syncResult = syncGroupsFromConfig(groupManager);
