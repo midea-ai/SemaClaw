@@ -47,6 +47,7 @@ export function useWebSocket(): WsHook {
   const wsRef        = useRef<WebSocket | null>(null);
   const configRef    = useRef<WsConfig | null>(null);
   const reconnectRef = useRef<ReturnType<typeof setTimeout>>();
+  const retryCountRef = useRef(0);
   const subscribedRef = useRef<Set<string>>(new Set());
   // jid → 全部完成后的延迟清除 timer
   const todosClearTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
@@ -199,6 +200,7 @@ export function useWebSocket(): WsHook {
         switch (msg.type) {
           case 'auth:ok':
             setStatus('connected');
+            retryCountRef.current = 0;
             rawSend({ type: 'list:groups' });
             // Re-subscribe to all previously-subscribed groups after reconnect
             for (const jid of subscribedRef.current) {
@@ -374,15 +376,30 @@ export function useWebSocket(): WsHook {
       ws.onclose = () => {
         if (destroyed) return;
         setStatus('disconnected');
-        reconnectRef.current = setTimeout(connect, 3000);
+        const delay = Math.min(3000 * 2 ** retryCountRef.current, 15000);
+        retryCountRef.current++;
+        reconnectRef.current = setTimeout(connect, delay);
       };
     };
+
+    const onFocus = () => {
+      if (destroyed) return;
+      if (wsRef.current?.readyState === WebSocket.OPEN || wsRef.current?.readyState === WebSocket.CONNECTING) return;
+      clearTimeout(reconnectRef.current);
+      retryCountRef.current = 0;
+      connect();
+    };
+    const onVisibility = () => { if (document.visibilityState === 'visible') onFocus(); };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisibility);
 
     connect();
 
     return () => {
       destroyed = true;
       clearTimeout(reconnectRef.current);
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisibility);
       wsRef.current?.close();
       // 清除所有待执行的 todos 延迟清除 timer
       for (const t of todosClearTimers.current.values()) clearTimeout(t);
