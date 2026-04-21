@@ -8,6 +8,7 @@ coverage/
 
 # npm pack artifacts
 *.tgz
+!vendor/*.tgz
 
 # Environment & credentials
 .env

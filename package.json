@@ -1,6 +1,6 @@
 {
   "name": "semaclaw",
-  "version": "0.1.2-beta.6",
+  "version": "0.1.2",
   "description": "Multi-group AI gateway built on sema-code-core",
   "license": "MIT",
   "author": "AIRC Sema Team",
@@ -49,7 +49,7 @@
     "grammy": "^1.34.0",
     "nodejieba": "^3.5.7",
     "qrcode-terminal": "^0.12.0",
-    "sema-core": "github:midea-ai/sema-code-core#feature/semaclaw",
+    "sema-core": "file:./vendor/sema-core-1.0.0.tgz",
     "sqlite-vec": "^0.1.7-alpha.2",
     "ws": "^8.19.0",
     "zod": "^3.25.76"
