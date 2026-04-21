@@ -2,7 +2,7 @@
  * GroupManager — 群组绑定的注册、查询与目录管理
  *
  * 目录结构（新）：
- *   ~/semaclaw/agents/{folder}/       — agentDataDir（CLAUDE.md/soul, memory/, .sema/sessions/）
+ *   ~/semaclaw/agents/{folder}/       — agentDataDir（SOUL.md, memory/）
  *   ~/semaclaw/workspace/{folder}/    — defaultWorkingDir（项目文档，无明确项目时工作于此）
  *
  * 全局配置：

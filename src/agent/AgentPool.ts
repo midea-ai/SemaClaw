@@ -471,7 +471,7 @@ export class AgentPool {
     if (this.cores.has(bindingInput.jid)) return this.cores.get(bindingInput.jid)!;
     let binding = bindingInput;
 
-    // agentDataDir: ~/semaclaw/agents/{folder}/ — soul/CLAUDE.md, memory/, .sema/
+    // agentDataDir: ~/semaclaw/agents/{folder}/ — SOUL.md, memory/, .sema/
     const agentDataDir = path.resolve(config.paths.agentsDir, binding.folder);
     // workingDir: ~/semaclaw/workspace/{folder}/ — 默认工作目录（项目文档）
     const workingDir = path.resolve(config.paths.workspaceDir, binding.folder);
@@ -516,7 +516,7 @@ export class AgentPool {
     const EXCLUDED_TOOLS = ['Task']
     const ALL_POOLED_TOOLS = [
       'Bash', 'Glob', 'Grep', 'Read', 'Write', 'Edit',
-      'TodoWrite', 'Skill', 'NotebookEdit', 'AskUserQuestion', 'ExitPlanMode',
+      'TodoWrite', 'Skill', 'NotebookEdit', 'AskUserQuestion',
     ]
     const useTools = binding.allowedTools
       ? binding.allowedTools.filter(t => !EXCLUDED_TOOLS.includes(t))

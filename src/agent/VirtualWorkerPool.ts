@@ -36,7 +36,7 @@ const VIRTUAL_EXCLUDED_TOOLS = ['Task', 'AskUserQuestion'];
 /** 所有非 admin 池化工具集 */
 const ALL_POOLED_TOOLS = [
   'Bash', 'Glob', 'Grep', 'Read', 'Write', 'Edit',
-  'TodoWrite', 'Skill', 'NotebookEdit', 'ExitPlanMode',
+  'TodoWrite', 'Skill', 'NotebookEdit',
 ];
 
 let instanceCounter = 0;
