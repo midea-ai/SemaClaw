@@ -426,6 +426,11 @@ export function updateTaskStatus(id: string, status: ScheduledTask['status']): v
   getDb().prepare('UPDATE scheduled_tasks SET status = ? WHERE id = ?').run(status, id);
 }
 
+export function getTaskById(id: string): ScheduledTask | null {
+  const row = getDb().prepare('SELECT * FROM scheduled_tasks WHERE id = ?').get(id) as Record<string, unknown> | undefined;
+  return row ? rowToTask(row) : null;
+}
+
 export function deleteTask(id: string): boolean {
   const result = getDb().prepare('DELETE FROM scheduled_tasks WHERE id = ?').run(id);
   return result.changes > 0;

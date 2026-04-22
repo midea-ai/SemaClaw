@@ -14,7 +14,8 @@
  */
 
 import type { ScheduledTask, TaskRunLog } from '../types';
-import { getTasksByGroup, getTaskRunLogs, listAllTasks, updateTaskStatus, deleteTask } from '../db/db';
+import { getTasksByGroup, getTaskRunLogs, listAllTasks, updateTaskStatus, deleteTask, getTaskById, advanceTaskNextRun } from '../db/db';
+import { computeNextRunOnResume } from '../scheduler/TaskScheduler';
 
 export const COMMANDS_HELP = [
   '📋 可用命令：',
@@ -57,11 +58,23 @@ export function dispatchCommand(text: string): string | null {
   if (manageMatch) {
     const action = manageMatch[1].toLowerCase();
     const taskId = manageMatch[2];
+
+    // resume 需要同时重置 next_run，避免沿用暂停前已过期的时间导致追赶风暴
+    if (action === 'resume') {
+      const task = getTaskById(taskId);
+      if (!task) return `❌ 任务不存在: ${taskId}`;
+      if (task.scheduleType === 'once') {
+        return `⚠️ One-time tasks cannot be resumed. Cancel this task and create a new one instead.`;
+      }
+      advanceTaskNextRun(task.id, computeNextRunOnResume(task), 'active');
+      return `✅ 任务 ${taskId} 已恢复`;
+    }
+
     const statusMap: Record<string, ScheduledTask['status']> = {
-      pause: 'paused', resume: 'active', cancel: 'completed',
+      pause: 'paused', cancel: 'completed',
     };
     updateTaskStatus(taskId, statusMap[action]);
-    const label = action === 'pause' ? '已暂停' : action === 'resume' ? '已恢复' : '已取消';
+    const label = action === 'pause' ? '已暂停' : '已取消';
     return `✅ 任务 ${taskId} ${label}`;
   }
 

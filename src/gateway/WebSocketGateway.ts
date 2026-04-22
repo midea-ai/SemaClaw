@@ -45,7 +45,8 @@
 
 import { WebSocketServer, WebSocket } from 'ws';
 import type { IncomingMessage, ScheduledTask, TaskRunLog, GroupBinding } from '../types';
-import { getTasksByGroup, getTaskRunLogs, listAllTasks, updateTaskStatus } from '../db/db';
+import { getTasksByGroup, getTaskRunLogs, listAllTasks, updateTaskStatus, getTaskById, advanceTaskNextRun } from '../db/db';
+import { computeNextRunOnResume } from '../scheduler/TaskScheduler';
 import { dispatchCommand } from './CommandDispatcher';
 import type { GroupManager } from './GroupManager';
 import { saveFeishuApp, deleteFeishuApp, getFeishuApps, saveQQApp, deleteQQApp, saveTelegramBot, deleteTelegramBot } from './GroupManager';
@@ -784,10 +785,29 @@ export class WebSocketGateway {
           this.send(client, { type: 'error', message: 'taskId and action required' });
           return;
         }
+
+        // resume 需要同时重置 next_run，避免沿用暂停前已过期的时间导致追赶风暴
+        if (action === 'resume') {
+          const task = getTaskById(taskId);
+          if (!task) {
+            this.send(client, { type: 'error', message: `Task not found: ${taskId}` });
+            return;
+          }
+          if (task.scheduleType === 'once') {
+            this.send(client, {
+              type: 'error',
+              message: 'One-time tasks cannot be resumed. Cancel this task and create a new one instead.',
+            });
+            return;
+          }
+          advanceTaskNextRun(task.id, computeNextRunOnResume(task), 'active');
+          this.send(client, { type: 'task:updated', taskId, status: 'active' });
+          return;
+        }
+
         let newStatus: ScheduledTask['status'];
         switch (action) {
           case 'pause':  newStatus = 'paused';    break;
-          case 'resume': newStatus = 'active';    break;
           case 'cancel': newStatus = 'completed'; break;
           default:
             this.send(client, { type: 'error', message: `Unknown action: ${action}` });

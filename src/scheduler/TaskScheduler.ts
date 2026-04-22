@@ -97,10 +97,22 @@ export class TaskScheduler {
 
       try {
         switch (task.contextMode) {
-          case 'notify':
-            await this.runNotify(task, group);
-            result = 'Notification sent';
+          case 'notify': {
+            const sent = await this.runNotify(task, group);
+            if (sent) {
+              result = 'Notification sent';
+            } else {
+              // skip 时写到 errorMsg：这样 task_run_logs.error 有值（上面的三元
+              // `runStatus==='error' ? errorMsg : null` 才能把原因落盘），
+              // 同时 scheduled_tasks.last_result 走 `result ?? errorMsg` 也能拿到。
+              const overdueMin = task.nextRun
+                ? Math.round((Date.now() - new Date(task.nextRun).getTime()) / 60000)
+                : 0;
+              errorMsg = `Notification skipped (stale, overdue ${overdueMin}m)`;
+              runStatus = 'error';
+            }
             break;
+          }
           case 'isolated':
             await this.agentPool.runIsolated(task, group);
             result = 'Task completed successfully';
@@ -163,17 +175,19 @@ export class TaskScheduler {
   /**
    * notify：直接发送 prompt 文本，不启动 Agent。
    * 有 TTL 检查，避免重启后发出过期通知。
+   * 返回 true 表示已发送，false 表示因过期被跳过（由 dispatch 记录到日志）。
    */
-  private async runNotify(task: ScheduledTask, group: GroupBinding): Promise<void> {
+  private async runNotify(task: ScheduledTask, group: GroupBinding): Promise<boolean> {
     const maxDelayMs = config.scheduler.notifyMaxDelayMinutes * 60 * 1000;
     const overdueMs = task.nextRun ? Date.now() - new Date(task.nextRun).getTime() : 0;
     if (overdueMs > maxDelayMs) {
       console.warn(
         `[TaskScheduler] Skipping stale notify task ${task.id} (overdue ${Math.round(overdueMs / 60000)}m)`
       );
-      return;
+      return false;
     }
     await this.agentPool.broadcastReply(task.chatJid, task.prompt, group.botToken ?? undefined);
+    return true;
   }
 
   /**
@@ -217,14 +231,42 @@ export class TaskScheduler {
 
 // ===== 辅助函数 =====
 
-function computeNextRun(task: ScheduledTask): string | null {
+/**
+ * 推进 next_run：interval 按上次 next_run + ms，cron 解析表达式。
+ *
+ * interval 的 base 会被 clamp 到 `now - ms`，避免长时间暂停/停机后
+ * next_run 一直停在过去、每次 tick 都仍落在过去导致追赶风暴
+ * （间隔失效，短周期任务会被无限次 dispatch）。
+ */
+export function computeNextRun(task: ScheduledTask): string | null {
   if (task.scheduleType === 'once') return null;
 
   if (task.scheduleType === 'interval') {
     const ms = Number(task.scheduleValue);
     if (isNaN(ms) || ms <= 0) return null;
-    const base = task.nextRun ? new Date(task.nextRun).getTime() : Date.now();
+    const prev = task.nextRun ? new Date(task.nextRun).getTime() : Date.now();
+    const base = Math.max(prev, Date.now() - ms);
     return new Date(base + ms).toISOString();
+  }
+
+  try {
+    return parseExpression(task.scheduleValue).next().toDate().toISOString();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 恢复任务时的 next_run 计算：从当前时间起重新起跳，不沿用暂停前的旧值。
+ * once 保留原值（若已过期，runNotify 的 TTL 会处理并在日志里标记 skipped）。
+ */
+export function computeNextRunOnResume(task: ScheduledTask): string | null {
+  if (task.scheduleType === 'once') return task.nextRun;
+
+  if (task.scheduleType === 'interval') {
+    const ms = Number(task.scheduleValue);
+    if (isNaN(ms) || ms <= 0) return null;
+    return new Date(Date.now() + ms).toISOString();
   }
 
   try {

@@ -52,9 +52,13 @@ function computeNextRun(scheduleType: string, scheduleValue: string): string {
       if (isNaN(ms) || ms <= 0) throw new Error(`Invalid interval value: ${scheduleValue}`);
       return new Date(Date.now() + ms).toISOString();
     }
-    case 'once':
-      // scheduleValue 直接作为 ISO 时间
-      return new Date(scheduleValue).toISOString();
+    case 'once': {
+      const parsed = new Date(scheduleValue);
+      if (isNaN(parsed.getTime())) {
+        throw new Error(`Invalid once datetime: ${scheduleValue}. Expected ISO 8601 with timezone offset, e.g. "2026-04-22T18:17:00+08:00".`);
+      }
+      return parsed.toISOString();
+    }
     default:
       throw new Error(`Unknown schedule_type: ${scheduleType}`);
   }
@@ -137,7 +141,9 @@ srv.registerTool(
         'Type of schedule: "cron" for cron expression, "interval" for repeating interval in ms, "once" for a one-time ISO timestamp'
       ),
       schedule_value: z.string().describe(
-        'Schedule value: cron expression (e.g. "0 9 * * *"), interval in milliseconds (e.g. "3600000"), or ISO 8601 datetime for once'
+        'cron (e.g. "0 9 * * *"), interval ms (e.g. "3600000"), or once ISO datetime. ' +
+        'For once: write local time without offset (e.g. "2026-04-23T18:00:00"); ' +
+        'interpreted in server local TZ, stored as UTC.'
       ),
       context_mode: z.enum(['isolated', 'group', 'notify', 'script', 'script-agent']).optional().describe(
         'How the task runs when triggered:\n- "notify": send the prompt text as a fixed message, no Agent involved. Silently dropped if overdue by more than 30 min (e.g. after a restart). Use for reminders and alerts with static content.\n- "script": run a shell script and send its stdout/stderr directly. Zero LLM cost — best for deterministic health checks, metrics, or any task whose output needs no interpretation.\n- "script-agent": run a shell script, then have an Agent summarize or act on the output. Efficient when multiple data sources can be collected in one script and synthesized in a single Agent turn.\n- "group": run in the current group session, sharing full conversation history and context. Use for periodic awareness tasks (heartbeat-style): the prompt can instruct the Agent to run available scripts, check multiple things, and stay silent if nothing needs attention.\n- "isolated": start a fresh Agent session with no prior context. All tool permissions are pre-approved (no user confirmation required). Use for standalone scheduled tasks that need reasoning but must not affect or be affected by the ongoing conversation.\nDefault: "notify" for static reminders; "isolated" for standalone reasoning tasks; "group" for periodic monitoring that benefits from conversation context.'
