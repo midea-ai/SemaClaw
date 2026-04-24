@@ -33,7 +33,7 @@
 - **三层上下文管理** —— 将工作上下文、长期记忆检索与按 Agent 划分的人格分区统一为同一个一致模型。
 - **Human-in-the-Loop 权限审批** —— `PermissionBridge` 是 harness 的原生原语，同时支持高风险工具调用的显式用户授权与 Agent 主动发起的澄清请求。
 - **四层插件架构** —— MCP 工具、子 Agent、Skills、Hooks，每一层对应一个明确的工程关注点，构成一个有原则的扩展面。
-- **DAG Teams** —— 两阶段混合编排框架：将 LLM 驱动的动态任务分解，与基于持久 Agent 人格的确定性 DAG 执行结合起来。
+- **DAG Teams** —— 两阶段混合编排框架：将 LLM 驱动的动态任务分解，与确定性 DAG 执行结合起来，支持持久 Agent 与虚拟 Agent 的混合编排，内置 5 个可开箱即用的虚拟 subagent。
 - **四模式定时任务** —— 纯通知 / 纯脚本 / 纯 Agent / 脚本+Agent 混合，按任务复杂度匹配执行模式，让 token 消耗与推理工作量成正比。
 - **Agentic Wiki** —— 将任务输出转化为结构化、可检索的 wiki 条目，与 Agent 记忆共同建立索引，形成一个会持续复利、能反哺未来 Agent 会话的个人知识库。
 - **多频道与 Web UI** —— 内置 Telegram、飞书、QQ 适配器，配套 WebSocket Gateway 与 React Web UI。
@@ -90,6 +90,7 @@ npm start
 | 文档 | 说明 |
 |---|---|
 | [快速开始与使用指南](docs/QUICK_START.md) | 安装、配置、CLI 命令、运行时布局、MCP 工具说明 |
+| [Hooks 使用指南](docs/hooks_guide.md) | 用 shell 脚本或 LLM 拦截 agent 生命周期事件 |
 | [远程访问指南](docs/REMOTE_ACCESS.md) | 通过反向代理（Nginx / Caddy）安全暴露 Web UI |
 | [技术报告](https://arxiv.org/abs/2604.11548) | SemaClaw: A Step Towards General-Purpose Personal AI Agents through Harness Engineering |
 | [贡献指南](CONTRIBUTING.md) | *即将发布* |

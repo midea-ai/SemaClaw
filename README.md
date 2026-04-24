@@ -33,7 +33,7 @@
 - **Three-layer context management** — Unifies working context, long-term memory retrieval, and per-agent persona partitioning into a single coherent model.
 - **Human-in-the-Loop permissions** — `PermissionBridge` is a native harness primitive supporting both explicit user authorization for high-risk tool actions and agent-initiated clarification requests.
 - **Four-layer plugin architecture** — MCP tools, subagents, skills, and hooks — each anchored to a distinct engineering concern, forming a principled extension surface.
-- **DAG Teams** — A two-stage hybrid orchestration framework combining LLM-based dynamic task decomposition with deterministic DAG execution grounded in persistent agent personas.
+- **DAG Teams** — A two-stage hybrid orchestration framework combining LLM-based dynamic task decomposition with deterministic DAG execution. Supports mixed teams of persistent and virtual agents, with 5 built-in virtual subagents ready to use out of the box.
 - **Four-mode scheduled tasks** — Pure notification, pure script, pure agent, and hybrid script-plus-agent execution — matching mode to task complexity so token consumption stays proportional to reasoning work.
 - **Agentic Wiki** — Transforms task outputs into structured, retrievable wiki entries indexed alongside agent memory, creating a compounding personal knowledge base that feeds back into future agent sessions.
 - **Multi-channel & Web UI** — Telegram, Feishu (Lark), and QQ adapters out of the box, plus a WebSocket gateway and a React-based Web UI.
@@ -90,6 +90,7 @@ For a complete walkthrough including environment variables, CLI usage, runtime l
 | Document | Description |
 |---|---|
 | [Quick Start & Usage Guide](docs/QUICK_START.md) | Installation, configuration, CLI commands, runtime layout, MCP tools |
+| [Hooks Guide](docs/hooks_guide.md) | Intercept agent lifecycle events with shell scripts or LLM-based checks |
 | [Remote Access Guide](docs/REMOTE_ACCESS.md) | Expose the Web UI securely via reverse proxy (Nginx / Caddy) |
 | [Technical Report](https://arxiv.org/abs/2604.11548) | SemaClaw: A Step Towards General-Purpose Personal AI Agents through Harness Engineering |
 | [Contributing](CONTRIBUTING.md) | *Coming soon* |
