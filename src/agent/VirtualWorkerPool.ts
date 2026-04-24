@@ -31,7 +31,7 @@ const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
 const CREATE_SESSION_TIMEOUT_MS = 30_000;
 
 /** 虚拟 agent 排除的工具 */
-const VIRTUAL_EXCLUDED_TOOLS = ['Task', 'AskUserQuestion'];
+const VIRTUAL_EXCLUDED_TOOLS = ['Task', 'AskUser'];
 
 /** 所有非 admin 池化工具集 */
 const ALL_POOLED_TOOLS = [

@@ -6,6 +6,7 @@
 import { useState } from 'react';
 import { SkillsPanel } from './SkillsPanel';
 import { SubagentsPanel } from './SubagentsPanel';
+import { HooksPanel } from './HooksPanel';
 
 type NavItem = 'skills' | 'subagents' | 'hooks';
 
@@ -37,7 +38,7 @@ const NAV_ITEMS: { id: NavItem; label: string; icon: React.ReactNode; available:
   {
     id: 'hooks',
     label: 'Hooks',
-    available: false,
+    available: true,
     icon: (
       <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
         <path strokeLinecap="round" strokeLinejoin="round" d="M17.25 6.75 22.5 12l-5.25 5.25m-10.5 0L1.5 12l5.25-5.25m7.5-3-4.5 16.5" />
@@ -117,6 +118,7 @@ export default function PluginsView({ onGoHome }: Props) {
         <div className="flex-1 flex flex-col overflow-hidden bg-gray-50/30">
           {activeNav === 'skills' && <SkillsPanel />}
           {activeNav === 'subagents' && <SubagentsPanel />}
+          {activeNav === 'hooks' && <HooksPanel />}
         </div>
       </div>
     </div>

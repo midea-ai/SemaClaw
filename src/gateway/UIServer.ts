@@ -556,6 +556,67 @@ export class UIServer {
       return;
     }
 
+    // ── Hooks config ────────────────────────────────────────────
+    if (urlPath === '/api/hooks') {
+      const hooksPath = path.join(os.homedir(), '.semaclaw', 'hooks.json');
+      if (req.method === 'GET') {
+        try {
+          const raw = fs.readFileSync(hooksPath, 'utf-8');
+          res.writeHead(200, { 'Content-Type': 'application/json' }).end(raw);
+        } catch {
+          res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ hooks: {} }, null, 2));
+        }
+        return;
+      }
+      if (req.method === 'PUT') {
+        const body = await this.readBody(req);
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(body);
+        } catch (e) {
+          res.writeHead(400, { 'Content-Type': 'application/json' }).end(JSON.stringify({ error: `Invalid JSON: ${(e as Error).message}` }));
+          return;
+        }
+        if (typeof parsed !== 'object' || parsed === null || !('hooks' in parsed) || typeof (parsed as Record<string, unknown>).hooks !== 'object' || Array.isArray((parsed as Record<string, unknown>).hooks)) {
+          res.writeHead(400, { 'Content-Type': 'application/json' }).end(JSON.stringify({ error: 'Root object must have a "hooks" key of type object' }));
+          return;
+        }
+        const hooks = (parsed as Record<string, unknown>).hooks as Record<string, unknown>;
+        for (const [event, configs] of Object.entries(hooks)) {
+          if (!Array.isArray(configs)) {
+            res.writeHead(400, { 'Content-Type': 'application/json' }).end(JSON.stringify({ error: `Event "${event}": value must be an array` }));
+            return;
+          }
+          for (let i = 0; i < configs.length; i++) {
+            const cfg = configs[i] as Record<string, unknown>;
+            if (!Array.isArray(cfg?.hooks)) {
+              res.writeHead(400, { 'Content-Type': 'application/json' }).end(JSON.stringify({ error: `Event "${event}"[${i}]: must have a "hooks" array` }));
+              return;
+            }
+            for (let j = 0; j < (cfg.hooks as unknown[]).length; j++) {
+              const hook = (cfg.hooks as Record<string, unknown>[])[j];
+              if (hook.type !== 'command' && hook.type !== 'prompt') {
+                res.writeHead(400, { 'Content-Type': 'application/json' }).end(JSON.stringify({ error: `Event "${event}"[${i}].hooks[${j}]: type must be "command" or "prompt"` }));
+                return;
+              }
+              if (hook.type === 'command' && !hook.command) {
+                res.writeHead(400, { 'Content-Type': 'application/json' }).end(JSON.stringify({ error: `Event "${event}"[${i}].hooks[${j}]: type "command" requires a "command" field` }));
+                return;
+              }
+              if (hook.type === 'prompt' && !hook.prompt) {
+                res.writeHead(400, { 'Content-Type': 'application/json' }).end(JSON.stringify({ error: `Event "${event}"[${i}].hooks[${j}]: type "prompt" requires a "prompt" field` }));
+                return;
+              }
+            }
+          }
+        }
+        fs.mkdirSync(path.join(os.homedir(), '.semaclaw'), { recursive: true });
+        fs.writeFileSync(hooksPath, JSON.stringify(parsed, null, 2), 'utf-8');
+        res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ ok: true }));
+        return;
+      }
+    }
+
     if (urlPath === '/api/thinking') {
       if (req.method === 'POST') {
         const body = await this.readBody(req);

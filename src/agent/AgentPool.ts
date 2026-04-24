@@ -516,7 +516,7 @@ export class AgentPool {
     const EXCLUDED_TOOLS = ['Task']
     const ALL_POOLED_TOOLS = [
       'Bash', 'Glob', 'Grep', 'Read', 'Write', 'Edit',
-      'TodoWrite', 'Skill', 'NotebookEdit', 'AskUserQuestion',
+      'TodoWrite', 'Skill', 'NotebookEdit', 'AskUser',
     ]
     const useTools = binding.allowedTools
       ? binding.allowedTools.filter(t => !EXCLUDED_TOOLS.includes(t))
