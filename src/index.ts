@@ -42,6 +42,7 @@ import * as os from 'os';
 import { runSetupIfNeeded } from './setup';
 import { initDb } from './db/db';
 import { GroupManager, ensureAdminGroup, ensureWechatAdminGroup, ensureAgentDirs, syncGroupsFromConfig, getFeishuApps, getQQApps, getWechatAccounts, getTelegramBots, loadLLMConfigs } from './gateway/GroupManager';
+import { syncLLMConfigToCore } from './gateway/llmModelSync';
 import { getModelManager } from 'sema-core';
 import { TelegramChannel } from './channels/telegram';
 import { FeishuChannel } from './channels/feishu';
@@ -104,13 +105,10 @@ async function main(): Promise<void> {
       try {
         const mm = getModelManager();
         // upsert 所有已保存的 profile，保证 model.conf 与 config.json 一致
+        // syncLLMConfigToCore 会在 addNewModel 之后把 vision 字段补回内存 profile
+        // （sema-core 1.0.0 的 convertToModelProfile 会丢弃 vision）
         for (const c of configs) {
-          await mm.addNewModel({
-            provider: c.provider, modelName: c.modelName,
-            baseURL: c.baseURL, apiKey: c.apiKey,
-            maxTokens: c.maxTokens, contextLength: c.contextLength,
-            adapt: c.adapt,
-          }, true);
+          await syncLLMConfigToCore(c);
         }
         await mm.switchCurrentModel(`${activeCfg.modelName}[${activeCfg.provider}]`);
         console.log(`[SemaClaw] LLM config synced: ${activeCfg.modelName}[${activeCfg.provider}]`);

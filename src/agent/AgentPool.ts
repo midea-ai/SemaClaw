@@ -18,8 +18,9 @@ import * as path from 'path';
 import * as os from 'os';
 import { SemaCore } from 'sema-core';
 import type { MessageCompleteData, StateUpdateData, SessionErrorData, TodosUpdateData, CompactExecData, CompactStartData } from 'sema-core/event';
-import type { ScheduledTask } from '../types';
+import type { ScheduledTask, MessageAttachment } from '../types';
 import { GroupBinding, IChannel } from '../types';
+import { buildAgentInput, type ImageAttachment } from './InputBuilder';
 import { config } from '../config';
 import { scheduleMCPConfig, workspaceMCPConfig, memoryMCPConfig, dispatchMCPConfig, feishuWikiMCPConfig, virtualMCPConfig } from '../mcp/mcpHelper';
 import { getFeishuApps } from '../gateway/GroupManager';
@@ -698,6 +699,7 @@ export class AgentPool {
     binding: GroupBinding,
     prompt: string,
     retriesLeft = 5,
+    attachments?: MessageAttachment[],
   ): Promise<void> {
     const core = await this.getOrCreate(binding);
 
@@ -829,7 +831,22 @@ export class AgentPool {
       // 记录用户 query 到每日日志（用原始 prompt，不含 memory 注入）
       this.dailyLogger.append(binding.folder, 'User', prompt);
 
-      core.processUserInput(fullPrompt);
+      // 多模态：buildAgentInput 既扫文本内的图片地址，也合并显式 attachments
+      const explicitImages: ImageAttachment[] = (attachments ?? [])
+        .filter((a) => a.type === 'image')
+        .map((a) => ({ url: a.url, mimeType: a.mimeType }));
+      buildAgentInput(fullPrompt, explicitImages)
+        .then((built) => {
+          if (built.failures.length > 0) {
+            console.warn(`[AgentPool] Image load failures for ${jid}:`, built.failures);
+          }
+          core.processUserInput(built.input);
+        })
+        .catch((err) => {
+          console.error(`[AgentPool] buildAgentInput failed for ${jid}:`, err);
+          // 兜底：回退到纯文本，避免一次图片处理失败阻断整个对话
+          core.processUserInput(fullPrompt);
+        });
     });
   }
 

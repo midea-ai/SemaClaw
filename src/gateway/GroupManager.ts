@@ -173,6 +173,12 @@ export interface LLMConfig {
   adapt: 'openai' | 'anthropic';
   maxTokens: number;
   contextLength: number;
+  /**
+   * 是否声明该模型支持视觉输入（多模态）。
+   * - true / false 显式覆盖 sema-core 的推断
+   * - undefined 走 sema-core 的 inferVision（按 modelName 正则推断）
+   */
+  vision?: boolean;
 }
 
 interface GlobalConfig {
@@ -494,6 +500,35 @@ export function saveLLMConfig(c: LLMConfig): void {
   const idx = configs.findIndex(x => x.id === c.id);
   if (idx >= 0) configs[idx] = c; else configs.push(c);
   saveGlobalConfig({ ...cfg, llmConfigs: configs });
+}
+
+/**
+ * 部分更新已存在的 LLM 配置。返回更新后的 config，找不到时返回 null。
+ *
+ * patch 中显式传入 null 的字段会被从 config 中删除（用于"恢复默认/推断"语义，
+ * 例如 vision: null 表示清除显式覆盖、回到 inferVision）。
+ */
+export function updateLLMConfig(
+  id: string,
+  patch: Partial<Record<keyof Omit<LLMConfig, 'id'>, unknown>>,
+): LLMConfig | null {
+  const cfg = loadGlobalConfig();
+  const configs = cfg.llmConfigs ?? [];
+  const idx = configs.findIndex(x => x.id === id);
+  if (idx < 0) return null;
+  const merged: Record<string, unknown> = { ...configs[idx] };
+  for (const [k, v] of Object.entries(patch)) {
+    if (v === null) {
+      delete merged[k];
+    } else if (v !== undefined) {
+      merged[k] = v;
+    }
+  }
+  merged.id = id;
+  const next = merged as unknown as LLMConfig;
+  configs[idx] = next;
+  saveGlobalConfig({ ...cfg, llmConfigs: configs });
+  return next;
 }
 
 export function removeLLMConfig(id: string): void {

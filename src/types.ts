@@ -25,6 +25,17 @@ export interface IncomingMessage {
    * 仅在需要时由 Channel 填充。
    */
   nativeMsgId?: string;
+  /**
+   * 图片附件（多模态输入）。url 可以是 http(s) URL / 绝对本地路径 / data: URL。
+   * 仅当前 turn 透传给 LLM；历史回放只保留 URL，不重发图片。
+   */
+  attachments?: MessageAttachment[];
+}
+
+export interface MessageAttachment {
+  type: 'image';
+  url: string;
+  mimeType?: string;
 }
 
 export interface ChatMeta {

@@ -17,6 +17,49 @@ interface LLMConfig {
   adapt: 'openai' | 'anthropic';
   maxTokens: number;
   contextLength: number;
+  /** 显式声明是否支持视觉输入；undefined 走自动推断（按 modelName） */
+  vision?: boolean;
+}
+
+// 与 sema-core util/vision.ts 保持一致的推断规则
+const VISION_PATTERNS: RegExp[] = [
+  /^gpt-4o/i,
+  /^gpt-4(\.\d+)?-vision/i,
+  /^gpt-5/i,
+  /^o1/i,
+  /^o3/i,
+  /^chatgpt-4o/i,
+  /^claude-3/i,
+  /^claude-(opus|sonnet|haiku)-[34]/i,
+  /^anthropic\/claude-3/i,
+  /qwen.*-vl/i,
+  /qwen2(\.\d+)?-vl/i,
+  /qvq/i,
+  /moonshot-v1-.*-vision/i,
+  /kimi.*vision/i,
+  /kimi-latest/i,
+  /glm-4v/i,
+  /glm-4\.\d+v/i,
+  /deepseek-vl/i,
+  /gemini.*pro/i,
+  /gemini.*flash/i,
+  /gemini-1\.5/i,
+  /gemini-2/i,
+  /llama-3\.2.*vision/i,
+  /-vl-/i,
+  /-vision/i,
+  /-vlm/i,
+];
+
+function inferVision(modelName: string): boolean {
+  if (!modelName) return false;
+  return VISION_PATTERNS.some(re => re.test(modelName));
+}
+
+/** 用于 UI 显示的有效 vision 状态：显式优先，否则按 modelName 推断 */
+function effectiveVision(c: { vision?: boolean; modelName: string }): boolean {
+  if (typeof c.vision === 'boolean') return c.vision;
+  return inferVision(c.modelName);
 }
 
 interface ProviderDef {
@@ -869,8 +912,11 @@ function AddModelPanel({ onClose, onSaved }: AddModelPanelProps) {
   const [saving, setSaving]             = useState(false);
   const [connTested, setConnTested]     = useState(false);
   const [connOk, setConnOk]             = useState(false);
+  // Vision toggle：null = 跟随推断；true/false = 用户显式覆盖
+  const [visionOverride, setVisionOverride] = useState<boolean | null>(null);
 
   const currentModel = isManual ? modelName : selectedModel;
+  const visionEffective = visionOverride ?? inferVision(currentModel);
 
   // 当模型名变化时自动填入已知限制
   useEffect(() => {
@@ -895,6 +941,7 @@ function AddModelPanel({ onClose, onSaved }: AddModelPanelProps) {
     setTestStatus({ msg: '', type: '' });
     setMaxTokens(def.defaultMaxTokens ?? 8192);
     setContextLength(def.defaultContextLength ?? 128000);
+    setVisionOverride(null);
   };
 
   const handleFetchModels = async () => {
@@ -958,7 +1005,10 @@ function AddModelPanel({ onClose, onSaved }: AddModelPanelProps) {
       const r = await fetch('/api/llm-config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ label, provider, baseURL, apiKey, modelName: currentModel, adapt, maxTokens, contextLength }),
+        body: JSON.stringify({
+          label, provider, baseURL, apiKey, modelName: currentModel, adapt, maxTokens, contextLength,
+          ...(visionOverride !== null ? { vision: visionOverride } : {}),
+        }),
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       onSaved();
@@ -1128,6 +1178,28 @@ function AddModelPanel({ onClose, onSaved }: AddModelPanelProps) {
           </div>
         </div>
 
+        {/* Vision toggle */}
+        <div className="flex items-center justify-between py-1">
+          <div className="min-w-0 pr-3">
+            <label className="text-[11px] text-gray-500 block">支持图片输入 (Vision)</label>
+            <p className="text-[10px] text-gray-400 mt-0.5 leading-relaxed">
+              {visionOverride === null
+                ? `未覆盖：按模型名自动推断为 ${inferVision(currentModel) ? '支持' : '不支持'}`
+                : visionOverride
+                  ? '已强制开启：图片会原样发给模型'
+                  : '已强制关闭：图片会降级为占位文本'}
+            </p>
+          </div>
+          <Toggle
+            value={visionEffective}
+            onChange={v => {
+              // 切换后落到显式覆盖；与推断值一致时清回 null（恢复跟随）
+              const inferred = inferVision(currentModel);
+              setVisionOverride(v === inferred ? null : v);
+            }}
+          />
+        </div>
+
         {/* Status */}
         {testStatus.type && (
           <p className={`text-[11px] px-1 ${testStatus.type === 'ok' ? 'text-green-600' : testStatus.type === 'err' ? 'text-red-500' : 'text-gray-400'}`}>
@@ -1233,6 +1305,24 @@ function LLMTab({ onOpenAdd, refreshKey }: LLMTabProps) {
     load();
   };
 
+  const handleToggleVision = async (c: LLMConfig) => {
+    const next = !effectiveVision(c);
+    const inferred = inferVision(c.modelName);
+    // 与推断值一致时回到 null（恢复跟随推断），否则显式覆盖
+    const visionPatch: { vision: boolean | null } = { vision: next === inferred ? null : next };
+    // 乐观更新
+    setConfigs(prev => prev.map(x => x.id === c.id ? { ...x, vision: visionPatch.vision ?? undefined } : x));
+    try {
+      await fetch(`/api/llm-config/${encodeURIComponent(c.id)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(visionPatch),
+      });
+    } catch {
+      load(); // 失败则回滚为服务端真相
+    }
+  };
+
   const activeConfig      = configs.find(c => c.id === activeId);
   const activeQuickConfig = configs.find(c => c.id === activeQuickId);
 
@@ -1321,6 +1411,12 @@ function LLMTab({ onOpenAdd, refreshKey }: LLMTabProps) {
             {configs.map(c => {
               const isMain  = c.id === activeId;
               const isQuick = c.id === activeQuickId;
+              const visionOn = effectiveVision(c);
+              const inferred = inferVision(c.modelName);
+              const visionExplicit = typeof c.vision === 'boolean';
+              const visionLabel = visionExplicit
+                ? (visionOn ? '强制开启' : '强制关闭')
+                : `自动 (${inferred ? '识图' : '不识图'})`;
               return (
                 <div
                   key={c.id}
@@ -1372,6 +1468,46 @@ function LLMTab({ onOpenAdd, refreshKey }: LLMTabProps) {
                       disabled={isQuick}
                     >
                       {isQuick ? '● 快速模型' : '设为快速模型'}
+                    </button>
+                  </div>
+                  {/* Vision toggle */}
+                  <div className="flex items-center justify-between mt-2 pt-2 border-t border-gray-200/60">
+                    <div className="min-w-0">
+                      <p className="text-[11px] text-gray-500">
+                        识图 (Vision)
+                        {visionExplicit && (
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              setConfigs(prev => prev.map(x => x.id === c.id ? { ...x, vision: undefined } : x));
+                              try {
+                                await fetch(`/api/llm-config/${encodeURIComponent(c.id)}`, {
+                                  method: 'PATCH',
+                                  headers: { 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ vision: null }),
+                                });
+                              } catch { load(); }
+                            }}
+                            className="ml-2 text-[10px] text-[#5BBFE8] hover:text-[#3AAAD4]"
+                            title="清除显式覆盖，回到自动推断"
+                          >
+                            重置为自动
+                          </button>
+                        )}
+                      </p>
+                      <p className="text-[10px] text-gray-400 mt-0.5">{visionLabel}</p>
+                    </div>
+                    <button
+                      onClick={() => handleToggleVision(c)}
+                      className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors flex-shrink-0 ${
+                        visionOn ? 'bg-[#5BBFE8]' : 'bg-gray-200'
+                      }`}
+                      role="switch"
+                      aria-checked={visionOn}
+                    >
+                      <span className={`inline-block h-3 w-3 transform rounded-full bg-white shadow transition-transform ${
+                        visionOn ? 'translate-x-3.5' : 'translate-x-0.5'
+                      }`} />
                     </button>
                   </div>
                 </div>

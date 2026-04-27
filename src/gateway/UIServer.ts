@@ -11,7 +11,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import type { AgentPool } from '../agent/AgentPool';
-import { saveAdminPermissionsConfig, loadLLMConfigs, saveLLMConfig, removeLLMConfig, setActiveLLMConfig, setActiveQuickLLMConfig, saveThinkingEnabled, type LLMConfig } from './GroupManager';
+import { saveAdminPermissionsConfig, loadLLMConfigs, saveLLMConfig, updateLLMConfig, removeLLMConfig, setActiveLLMConfig, setActiveQuickLLMConfig, saveThinkingEnabled, type LLMConfig } from './GroupManager';
+import { syncLLMConfigToCore } from './llmModelSync';
 import { getModelManager } from 'sema-core';
 import type { WikiManager } from '../wiki/WikiManager';
 import { readDisabledSkills, disableSkill, enableSkill } from '../skills/disabled.js';
@@ -203,14 +204,9 @@ export class UIServer {
 
         // 同步写入 sema-core 单例（下一次 LLM call 立刻生效）
         try {
-          await getModelManager().addNewModel({
-            provider: cfg.provider, modelName: cfg.modelName,
-            baseURL: cfg.baseURL, apiKey: cfg.apiKey,
-            maxTokens: cfg.maxTokens, contextLength: cfg.contextLength,
-            adapt: cfg.adapt,
-          }, true /* skipValidation，已在前端测过 */);
+          await syncLLMConfigToCore(cfg);
         } catch (e) {
-          console.warn('[UIServer] addNewModel to sema-core failed:', e);
+          console.warn('[UIServer] syncLLMConfigToCore failed:', e);
         }
 
         // 第一条配置自动激活
@@ -238,12 +234,7 @@ export class UIServer {
             const cfg = configs.find(c => c.id === id);
             if (cfg) {
               try {
-                await getModelManager().addNewModel({
-                  provider: cfg.provider, modelName: cfg.modelName,
-                  baseURL: cfg.baseURL, apiKey: cfg.apiKey,
-                  maxTokens: cfg.maxTokens, contextLength: cfg.contextLength,
-                  adapt: cfg.adapt,
-                }, true);
+                await syncLLMConfigToCore(cfg);
                 // applyTaskModelConfig 同时更新 main + quick 指针
                 const mainCfg = configs.find(c => c.id === mainId);
                 const mainName = mainCfg ? `${mainCfg.modelName}[${mainCfg.provider}]` : (getModelManager().getModelName('main') ?? '');
@@ -266,12 +257,7 @@ export class UIServer {
             const cfg = configs.find(c => c.id === id);
             if (cfg) {
               try {
-                await getModelManager().addNewModel({
-                  provider: cfg.provider, modelName: cfg.modelName,
-                  baseURL: cfg.baseURL, apiKey: cfg.apiKey,
-                  maxTokens: cfg.maxTokens, contextLength: cfg.contextLength,
-                  adapt: cfg.adapt,
-                }, true);
+                await syncLLMConfigToCore(cfg);
                 await getModelManager().switchCurrentModel(`${cfg.modelName}[${cfg.provider}]`);
                 console.log(`[UIServer] Switched sema-core main model to: ${cfg.modelName}[${cfg.provider}]`);
               } catch (e) {
@@ -313,10 +299,38 @@ export class UIServer {
       }
     }
 
+    // PATCH /api/llm-config/:id — 部分更新（用于 toggle vision 等）
+    const idMatch = urlPath.match(/^\/api\/llm-config\/([^/]+)$/);
+    if (idMatch && req.method === 'PATCH') {
+      const id = decodeURIComponent(idMatch[1]);
+      const body = await this.readBody(req);
+      let patch: Record<string, unknown>;
+      try {
+        patch = JSON.parse(body) as Record<string, unknown>;
+      } catch {
+        res.writeHead(400, { 'Content-Type': 'application/json' }).end(JSON.stringify({ error: 'invalid JSON' }));
+        return;
+      }
+      // 防止 id 被绕过修改
+      delete patch.id;
+      const updated = updateLLMConfig(id, patch);
+      if (!updated) {
+        res.writeHead(404, { 'Content-Type': 'application/json' }).end(JSON.stringify({ error: 'config not found' }));
+        return;
+      }
+      // 同步到 sema-core 单例（addNewModel 是 upsert by name；vision 单独打 patch）
+      try {
+        await syncLLMConfigToCore(updated);
+      } catch (e) {
+        console.warn('[UIServer] PATCH syncLLMConfigToCore failed:', e);
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify(updated));
+      return;
+    }
+
     // DELETE /api/llm-config/:id
-    const deleteMatch = urlPath.match(/^\/api\/llm-config\/([^/]+)$/);
-    if (deleteMatch && req.method === 'DELETE') {
-      const id = decodeURIComponent(deleteMatch[1]);
+    if (idMatch && req.method === 'DELETE') {
+      const id = decodeURIComponent(idMatch[1]);
       removeLLMConfig(id);
       res.writeHead(204).end();
       return;

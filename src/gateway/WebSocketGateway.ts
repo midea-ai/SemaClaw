@@ -695,12 +695,25 @@ export class WebSocketGateway {
         if (!this.requireAuth(client)) return;
         const groupJid = String(msg.groupJid ?? '');
         const text = String(msg.text ?? '').trim();
-        if (!groupJid || !text) {
-          this.send(client, { type: 'error', message: 'groupJid and text required' });
+        // attachments 可选：[{ type:'image', url, mimeType? }]
+        const rawAttachments = Array.isArray(msg.attachments) ? msg.attachments : undefined;
+        const attachments: import('../types').MessageAttachment[] | undefined = rawAttachments
+          ?.flatMap((a: any) =>
+            a && a.type === 'image' && typeof a.url === 'string'
+              ? [{
+                  type: 'image' as const,
+                  url: a.url as string,
+                  ...(typeof a.mimeType === 'string' ? { mimeType: a.mimeType as string } : {}),
+                }]
+              : [],
+          );
+        const hasAttachments = !!attachments && attachments.length > 0;
+        if (!groupJid || (!text && !hasAttachments)) {
+          this.send(client, { type: 'error', message: 'groupJid and (text or attachments) required' });
           return;
         }
         // 命令拦截：admin 客户端输入匹配的命令格式直接处理，不进 agent
-        if (this.tryHandleCommand(client, groupJid, text)) return;
+        if (text && this.tryHandleCommand(client, groupJid, text)) return;
         // pending 绑定尚未完成，拒绝发消息
         if (groupJid.includes(':pending:')) {
           const ch = groupJid.startsWith('qq:') ? 'QQ' : '飞书';
@@ -713,7 +726,7 @@ export class WebSocketGateway {
           return;
         }
         this.groupQueue.enqueue(groupJid, () =>
-          this.agentPool.processAndWait(groupJid, group, text)
+          this.agentPool.processAndWait(groupJid, group, text, undefined, attachments)
         );
         return;
       }
