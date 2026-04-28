@@ -23,6 +23,7 @@ import { extractZipToDir, writeSkillOrigin, readLockfile, writeLockfile } from '
 import { readDisabledSubagents, disableSubagent, enableSubagent } from '../subagents/disabled.js';
 import type { PersonaRegistry } from '../agent/PersonaRegistry';
 import { config } from '../config.js';
+import type { MarketplaceManager } from '../marketplace/MarketplaceManager.js';
 
 const MIME: Record<string, string> = {
   '.html':  'text/html; charset=utf-8',
@@ -44,6 +45,7 @@ export class UIServer {
   private readonly distDir: string;
   private wikiManager: WikiManager | null = null;
   private personaRegistry: PersonaRegistry | null = null;
+  private marketplaceManager: MarketplaceManager | null = null;
 
   setWikiManager(wm: WikiManager): void {
     this.wikiManager = wm;
@@ -51,6 +53,10 @@ export class UIServer {
 
   setPersonaRegistry(pr: PersonaRegistry): void {
     this.personaRegistry = pr;
+  }
+
+  setMarketplaceManager(mm: MarketplaceManager): void {
+    this.marketplaceManager = mm;
   }
 
   constructor(private readonly agentPool: AgentPool, opts?: { port?: number }) {
@@ -347,7 +353,7 @@ export class UIServer {
       try {
         const registry = process.env['CLAWHUB_REGISTRY']?.trim() || DEFAULT_REGISTRY;
         const rawResults = await searchSkills(q, { limit: 20, registry });
-        const localSlugs = new Set(loadAllLocalSkills().map(s => s.name));
+        const localSlugs = new Set(loadAllLocalSkills(this.marketplaceManager?.getSkillSourceDefs()).map(s => s.name));
         const results = rawResults.map(r => ({ ...r, installed: localSlugs.has(r.slug) }));
         res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ results }));
       } catch (err) {
@@ -415,7 +421,7 @@ export class UIServer {
     const readmeMatch = urlPath.match(/^\/api\/skills\/([^/]+)\/readme$/);
     if (readmeMatch) {
       const name = decodeURIComponent(readmeMatch[1]);
-      const skills = loadAllLocalSkills();
+      const skills = loadAllLocalSkills(this.marketplaceManager?.getSkillSourceDefs());
       const skill = skills.find(s => s.name === name);
       if (!skill) {
         res.writeHead(404).end('Not found');
@@ -436,7 +442,7 @@ export class UIServer {
 
     // GET /api/skills — 返回所有本地 skill 列表及启用/禁用状态
     if (urlPath === '/api/skills' && req.method === 'GET') {
-      const skills = loadAllLocalSkills();
+      const skills = loadAllLocalSkills(this.marketplaceManager?.getSkillSourceDefs());
       const disabled = readDisabledSkills();
       const result = skills.map(s => ({
         name: s.name,
@@ -704,6 +710,12 @@ export class UIServer {
       return;
     }
 
+    // ── Marketplace API ─────────────────────────────────────────
+    if (urlPath.startsWith('/api/marketplace')) {
+      await this.handleMarketplace(urlPath, req, res);
+      return;
+    }
+
     // ── Wiki API ────────────────────────────────────────────────
     if (urlPath.startsWith('/api/wiki') && this.wikiManager) {
       await this.handleWiki(urlPath, req, res);
@@ -740,6 +752,148 @@ export class UIServer {
     const mime = MIME[path.extname(filePath)] ?? 'application/octet-stream';
     res.writeHead(200, { 'Content-Type': mime });
     fs.createReadStream(filePath).pipe(res);
+  }
+
+  // ── Marketplace API handler ────────────────────────────────────
+
+  private async handleMarketplace(
+    urlPath: string,
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+  ): Promise<void> {
+    const mm = this.marketplaceManager;
+    const json = (data: unknown, status = 200) =>
+      res.writeHead(status, { 'Content-Type': 'application/json' }).end(JSON.stringify(data));
+    const err = (msg: string, status = 400) => json({ error: msg }, status);
+
+    if (!mm) { err('Marketplace manager not initialized', 503); return; }
+
+    try {
+      // GET /api/marketplace/sources
+      if (urlPath === '/api/marketplace/sources' && req.method === 'GET') {
+        json({ sources: mm.getSources() });
+        return;
+      }
+
+      // POST /api/marketplace/sources — add new source
+      if (urlPath === '/api/marketplace/sources' && req.method === 'POST') {
+        const body = JSON.parse(await this.readBody(req));
+        const { name, type, url, branch, localPath, priority, enabled } = body as {
+          name: string; type: 'git' | 'local';
+          url?: string; branch?: string; localPath?: string;
+          priority?: number; enabled?: boolean;
+        };
+        if (!name?.trim()) { err('name required'); return; }
+        if (type !== 'git' && type !== 'local') { err('type must be git or local'); return; }
+        if (type === 'git' && !url?.trim()) { err('url required for git source'); return; }
+        if (type === 'local' && !localPath?.trim()) { err('localPath required for local source'); return; }
+        const source = mm.addSource({ name, type, url, branch, localPath, priority, enabled });
+        json(source, 201);
+        return;
+      }
+
+      // POST /api/marketplace/sources/reorder — reorder by priority
+      if (urlPath === '/api/marketplace/sources/reorder' && req.method === 'POST') {
+        const body = JSON.parse(await this.readBody(req)) as { orderedIds: string[] };
+        mm.reorderSources(body.orderedIds ?? []);
+        json({ sources: mm.getSources() });
+        return;
+      }
+
+      // GET /api/marketplace/items — all items across all sources
+      if (urlPath === '/api/marketplace/items' && req.method === 'GET') {
+        json({ sources: mm.getItems() });
+        return;
+      }
+
+      // POST /api/marketplace/enable-all
+      if (urlPath === '/api/marketplace/enable-all' && req.method === 'POST') {
+        mm.enableAll();
+        this.agentPool.reloadAllSkills();
+        json({ ok: true });
+        return;
+      }
+
+      // POST /api/marketplace/disable-all
+      if (urlPath === '/api/marketplace/disable-all' && req.method === 'POST') {
+        mm.disableAll();
+        this.agentPool.reloadAllSkills();
+        json({ ok: true });
+        return;
+      }
+
+      // Source-level routes: /api/marketplace/sources/:id/...
+      const sourceMatch = urlPath.match(/^\/api\/marketplace\/sources\/([^/]+)(?:\/(.+))?$/);
+      if (sourceMatch) {
+        const sourceId = decodeURIComponent(sourceMatch[1]);
+        const sub = sourceMatch[2] ?? '';
+
+        // PUT /api/marketplace/sources/:id — update source
+        if (!sub && req.method === 'PUT') {
+          const body = JSON.parse(await this.readBody(req));
+          const updated = mm.updateSource(sourceId, body);
+          if (!updated) { err('source not found', 404); return; }
+          json(updated);
+          return;
+        }
+
+        // DELETE /api/marketplace/sources/:id
+        if (!sub && req.method === 'DELETE') {
+          const removed = mm.removeSource(sourceId);
+          if (!removed) { err('source not found', 404); return; }
+          this.agentPool.reloadAllSkills();
+          json({ ok: true });
+          return;
+        }
+
+        // POST /api/marketplace/sources/:id/sync
+        if (sub === 'sync' && req.method === 'POST') {
+          try {
+            await mm.syncSource(sourceId);
+            // Reload skills/subagents after sync
+            this.agentPool.reloadAllSkills();
+            this.personaRegistry?.setExtraDirs(mm.getSubagentDirs());
+            json({ ok: true, source: mm.getSource(sourceId) });
+          } catch (e) {
+            mm.updateSource(sourceId, { syncError: String(e instanceof Error ? e.message : e) });
+            err(`Sync failed: ${e instanceof Error ? e.message : String(e)}`, 502);
+          }
+          return;
+        }
+
+        // POST /api/marketplace/sources/:id/enable-all
+        if (sub === 'enable-all' && req.method === 'POST') {
+          mm.enableAllInSource(sourceId);
+          this.agentPool.reloadAllSkills();
+          json({ ok: true });
+          return;
+        }
+
+        // POST /api/marketplace/sources/:id/disable-all
+        if (sub === 'disable-all' && req.method === 'POST') {
+          mm.disableAllInSource(sourceId);
+          this.agentPool.reloadAllSkills();
+          json({ ok: true });
+          return;
+        }
+
+        // POST /api/marketplace/sources/:id/plugins/:name/toggle
+        const pluginToggleMatch = sub.match(/^plugins\/([^/]+)\/toggle$/);
+        if (pluginToggleMatch && req.method === 'POST') {
+          const pluginName = decodeURIComponent(pluginToggleMatch[1]);
+          const body = JSON.parse(await this.readBody(req)) as { enabled: boolean };
+          mm.setPluginEnabled(sourceId, pluginName, body.enabled);
+          this.agentPool.reloadAllSkills();
+          this.personaRegistry?.setExtraDirs(mm.getSubagentDirs());
+          json({ ok: true });
+          return;
+        }
+      }
+
+      err('Not found', 404);
+    } catch (e: unknown) {
+      err(String((e as Error).message ?? e), 500);
+    }
   }
 
   // ── Wiki API handler ───────────────────────────────────────────

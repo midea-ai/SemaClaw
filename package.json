@@ -50,6 +50,7 @@
     "nodejieba": "^3.5.7",
     "qrcode-terminal": "^0.12.0",
     "sema-core": "file:./vendor/sema-core-1.0.0.tgz",
+    "simple-git": "^3.36.0",
     "sqlite-vec": "^0.1.7-alpha.2",
     "ws": "^8.19.0",
     "zod": "^3.25.76"

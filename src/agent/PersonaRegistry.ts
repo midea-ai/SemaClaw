@@ -21,15 +21,33 @@ export interface PersonaConfig {
 /** systemPrompt 最大字符数，超出截断 */
 const MAX_SYSTEM_PROMPT_LENGTH = 8000;
 
+interface ExtraDir {
+  dir: string;
+  sourceId?: string;
+  sourceName?: string;
+  skipNames?: Set<string>;
+}
+
 export class PersonaRegistry {
   private personas = new Map<string, PersonaConfig>();
   private watcher: fs.FSWatcher | null = null;
   private readonly dir: string;
+  private extraDirs: ExtraDir[] = [];
 
   constructor(virtualAgentsDir: string) {
     this.dir = virtualAgentsDir;
     this.loadAll();
     this.startWatcher();
+  }
+
+  /**
+   * 设置来自插件市场的额外 persona 目录（低优先级，主目录 personas 会覆盖同名项）
+   * 按调用顺序排列（最后一个优先级最高），主目录始终最高。
+   * 调用后立即触发 reload。
+   */
+  setExtraDirs(dirs: ExtraDir[]): void {
+    this.extraDirs = dirs;
+    this.loadAll();
   }
 
   get(name: string): PersonaConfig | null {
@@ -55,33 +73,51 @@ export class PersonaRegistry {
   // ===== Internal =====
 
   private loadAll(): void {
-    if (!fs.existsSync(this.dir)) {
-      console.warn(`[PersonaRegistry] Directory not found, skipping: ${this.dir}`);
-      return;
-    }
-
-    const files = fs.readdirSync(this.dir).filter(f => f.endsWith('.md'));
     const newMap = new Map<string, PersonaConfig>();
 
-    for (const file of files) {
-      const filePath = path.join(this.dir, file);
+    // 1. Load extra dirs first (lower priority): last in list = higher priority among extras
+    for (const extra of this.extraDirs) {
+      if (!fs.existsSync(extra.dir)) continue;
       try {
-        const persona = this.parseFile(filePath);
-        if (!persona) continue;
-
-        if (newMap.has(persona.name)) {
-          // name 字段重名：回退使用文件名（去 .md 后缀）作为 name
-          const fileBaseName = path.basename(file, '.md');
-          if (newMap.has(fileBaseName)) {
-            console.warn(`[PersonaRegistry] Duplicate name "${persona.name}" and filename "${fileBaseName}" both taken, skipping ${file}`);
-            continue;
-          }
-          console.warn(`[PersonaRegistry] Duplicate name "${persona.name}" in ${file}, falling back to filename "${fileBaseName}"`);
-          persona.name = fileBaseName;
+        for (const file of fs.readdirSync(extra.dir).filter(f => f.endsWith('.md'))) {
+          const filePath = path.join(extra.dir, file);
+          try {
+            const persona = this.parseFile(filePath);
+            if (!persona) continue;
+            if (extra.skipNames?.has(persona.name)) continue;
+            newMap.set(persona.name, persona);
+          } catch { continue; }
         }
-        newMap.set(persona.name, persona);
-      } catch (e) {
-        console.warn(`[PersonaRegistry] Failed to parse ${file}:`, e);
+      } catch { continue; }
+    }
+
+    // 2. Load primary dir last (highest priority, overwrites extra dirs)
+    if (!fs.existsSync(this.dir)) {
+      console.warn(`[PersonaRegistry] Primary directory not found, skipping: ${this.dir}`);
+    } else {
+      const files = fs.readdirSync(this.dir).filter(f => f.endsWith('.md'));
+      for (const file of files) {
+        const filePath = path.join(this.dir, file);
+        try {
+          const persona = this.parseFile(filePath);
+          if (!persona) continue;
+
+          if (newMap.has(persona.name) && !this.extraDirs.some(e => {
+            try { return fs.existsSync(path.join(e.dir, file)); } catch { return false; }
+          })) {
+            // Duplicate within primary dir: fall back to filename
+            const fileBaseName = path.basename(file, '.md');
+            if (newMap.has(fileBaseName)) {
+              console.warn(`[PersonaRegistry] Duplicate name "${persona.name}" and filename "${fileBaseName}" both taken, skipping ${file}`);
+              continue;
+            }
+            console.warn(`[PersonaRegistry] Duplicate name "${persona.name}" in ${file}, falling back to filename "${fileBaseName}"`);
+            persona.name = fileBaseName;
+          }
+          newMap.set(persona.name, persona);
+        } catch (e) {
+          console.warn(`[PersonaRegistry] Failed to parse ${file}:`, e);
+        }
       }
     }
 

@@ -14,12 +14,18 @@ export interface SkillEntry {
   name: string
   description: string
   version?: string
-  source: string      // 来源标签：bundled / global-compat / global-sema / clawhub-managed
+  source: string      // 来源标签：bundled / global-compat / global-sema / clawhub-managed / marketplace:xxx
+  sourceId?: string   // marketplace source ID（非 marketplace 来源为 undefined）
   dir: string         // skill 文件夹绝对路径
   filePath: string    // SKILL.md 路径
 }
 
-type SourceDef = { dir: string; source: string }
+export type SourceDef = {
+  dir: string
+  source: string
+  sourceId?: string        // marketplace source ID
+  skipNames?: Set<string>  // user-disabled items in this source (marketplace only)
+}
 
 export function getSourceDefs(): SourceDef[] {
   return [
@@ -71,11 +77,14 @@ export function scanSource(def: SourceDef): SkillEntry[] {
         const content = fs.readFileSync(skillMd, 'utf8')
         const fm = parseFrontmatter(content)
         if (!fm.name && !fm.description) continue
+        const name = fm.name || item
+        if (def.skipNames?.has(name)) continue
         entries.push({
-          name: fm.name || item,
+          name,
           description: fm.description || '',
           version: fm.version,
           source: def.source,
+          sourceId: def.sourceId,
           dir: fullPath,
           filePath: skillMd,
         })
@@ -87,9 +96,12 @@ export function scanSource(def: SourceDef): SkillEntry[] {
 
 /**
  * 扫描所有来源，返回已去重（高优先级覆盖低优先级）的 skill 列表
+ *
+ * extraSources: 来自插件市场的额外来源，已按优先级降序排列（priority=1 最后 = 最高优先级）
  */
-export function loadAllLocalSkills(): SkillEntry[] {
-  const sources = getSourceDefs()
+export function loadAllLocalSkills(extraSources?: SourceDef[]): SkillEntry[] {
+  // 内置来源 + marketplace 来源（appended = 高优先级）
+  const sources = [...getSourceDefs(), ...(extraSources ?? [])]
   const map = new Map<string, SkillEntry>()
   for (const def of sources) {
     for (const entry of scanSource(def)) {

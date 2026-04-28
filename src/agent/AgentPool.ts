@@ -31,6 +31,7 @@ import { MemoryManager, formatSearchResults } from '../memory/MemoryManager';
 import { PermissionBridge, PermissionBridgeOptions } from './PermissionBridge';
 import { readDisabledSkills, invalidateDisabledSkillsCache } from '../skills/disabled.js';
 import { expandSkillsDir } from '../skills/expand.js';
+import type { MarketplaceManager } from '../marketplace/MarketplaceManager.js';
 import type { DispatchBridge } from './DispatchBridge';
 import type { GroupQueue } from './GroupQueue';
 import { getSkillsReloadSignalPath } from '../clawhub/signal.js';
@@ -121,6 +122,7 @@ export class AgentPool {
   private dispatchBridge: DispatchBridge | null = null;
   private groupQueue: GroupQueue | null = null;
   /** jid → dispatch task 期间的临时工作目录（完成后 revert） */
+  private marketplaceManager: MarketplaceManager | null = null;
   private dispatchWorkspaceOverrides = new Map<string, string>();
   /** jid 集合：当前正在实际执行 dispatch task 的 agent（非仅入队） */
   private dispatchExecuting = new Set<string>();
@@ -211,6 +213,7 @@ export class AgentPool {
             : []),
           ...expandSkillsDir(path.join(os.homedir(), '.claude', 'skills'), 'user', _disabled),
           ...expandSkillsDir(config.paths.managedSkillsDir, 'managed', _disabled),
+          ...(this.marketplaceManager?.getSkillExtraDirs(_disabled) ?? []),
           ...expandSkillsDir(path.join(workingDir, 'skills'), 'workspace', _disabled),
         ];
         // SemaCore.engine.initialConfig 是可变对象，直接更新 skillsExtraDirs
@@ -221,6 +224,10 @@ export class AgentPool {
       core.reloadSkills(_disabled);
     }
     console.log('[AgentPool] Skills reloaded.');
+  }
+
+  setMarketplaceManager(mm: MarketplaceManager): void {
+    this.marketplaceManager = mm;
   }
 
   /** 读取当前权限开关状态 */
@@ -485,7 +492,7 @@ export class AgentPool {
 
     const skipPerms = this.resolveSkipPerms(binding);
     // Skills 额外搜索目录（低→高优先级，追加在 sema-core 内置目录之后）
-    // bundled < global-compat < managed(clawhub) < workspace
+    // bundled < global-compat < managed(clawhub) < marketplace < workspace
     // 每个来源目录展开为单个 skill 子目录，过滤掉 disabled skills
     const _disabled = readDisabledSkills();
     const skillsExtraDirs = [
@@ -494,6 +501,7 @@ export class AgentPool {
         : []),
       ...expandSkillsDir(path.join(os.homedir(), '.claude', 'skills'), 'user', _disabled),
       ...expandSkillsDir(config.paths.managedSkillsDir, 'managed', _disabled),
+      ...(this.marketplaceManager?.getSkillExtraDirs(_disabled) ?? []),
       ...expandSkillsDir(path.join(workingDir, 'skills'), 'workspace', _disabled),
     ];
 
@@ -523,9 +531,10 @@ export class AgentPool {
       ? binding.allowedTools.filter(t => !EXCLUDED_TOOLS.includes(t))
       : ALL_POOLED_TOOLS
 
-    // 加载 hook 配置（全局 ~/.semaclaw/ + workspace）
+    // 加载 hook 配置（全局 ~/.semaclaw/ + workspace + 插件市场）
     const globalConfigDir = path.dirname(config.paths.globalConfigPath);
-    const { hookConfig, hookEnv } = loadAndResolveHookConfig(globalConfigDir, workingDir);
+    const marketplaceHookFiles = this.marketplaceManager?.getHookFiles() ?? [];
+    const { hookConfig, hookEnv } = loadAndResolveHookConfig(globalConfigDir, workingDir, marketplaceHookFiles);
 
     memSnap('before new SemaCore');
     const core = new SemaCore({

@@ -60,6 +60,7 @@ import { PersonaRegistry } from './agent/PersonaRegistry';
 import { VirtualWorkerPool } from './agent/VirtualWorkerPool';
 import { installBuiltinPersonas } from './subagents/builtin-personas';
 import { WikiManager } from './wiki/WikiManager';
+import { getMarketplaceManager } from './marketplace/MarketplaceManager';
 
 async function main(): Promise<void> {
   // ===== 0. 启动引导 =====
@@ -386,6 +387,12 @@ async function main(): Promise<void> {
   // ===== 9.1 虚拟 Agent 注入（Phase 2 DAG 集成）=====
   installBuiltinPersonas(config.paths.virtualAgentsDir);
   const personaRegistry = new PersonaRegistry(config.paths.virtualAgentsDir);
+
+  // ===== 插件市场（Marketplace）=====
+  const marketplaceManager = getMarketplaceManager();
+  agentPool.setMarketplaceManager(marketplaceManager);
+  // 注入市场来源的 subagent 目录（启动时加载一次，sync 后会再次调用）
+  personaRegistry.setExtraDirs(marketplaceManager.getSubagentDirs());
   const virtualWorkerPool = new VirtualWorkerPool();
   virtualWorkerPool.setPermissionBridge(
     agentPool.getPermissionBridge(),
@@ -424,6 +431,7 @@ async function main(): Promise<void> {
   const uiServer = new UIServer(agentPool);
   uiServer.setWikiManager(wikiManager);
   uiServer.setPersonaRegistry(personaRegistry);
+  uiServer.setMarketplaceManager(marketplaceManager);
   await uiServer.start();
 
   console.log('[SemaClaw] Ready');

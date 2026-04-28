@@ -13,11 +13,98 @@ interface HookDefinition {
 
 interface HookEventConfig {
   matcher?: string;
+  if?: string;
   hooks: HookDefinition[];
 }
 
 export interface HookConfig {
   hooks: Record<string, HookEventConfig[]>;
+}
+
+// sema-core 支持的合法 hook 事件名
+const VALID_HOOK_EVENTS = new Set([
+  'UserPromptSubmit',
+  'PreToolUse',
+  'PostToolUse',
+  'PermissionRequest',
+  'Stop',
+  'SessionStart',
+  'PreCompact',
+  'PostCompact',
+]);
+
+// blocking 但无 timeout 时的兜底超时（秒）
+const MARKETPLACE_BLOCKING_DEFAULT_TIMEOUT = 30;
+
+/**
+ * 对来自插件市场的 hook 配置做严格校验，过滤无效条目并修补潜在问题。
+ *
+ * 策略：
+ * - 未知事件名 → 整组跳过（warn）
+ * - hook 缺少 type / 必填字段 → 该 hook 条目跳过（warn）
+ * - blocking=true 且无 timeout → 补 timeout=30 并 warn（而非跳过）
+ *
+ * 用户自己的 hooks.json 不经过此函数，保留完整控制权。
+ */
+function validateAndFilterMarketplaceHookConfig(
+  config: HookConfig,
+  filePath: string,
+): HookConfig {
+  const tag = `[hooks:marketplace] ${path.basename(path.dirname(filePath))}`;
+  const result: HookConfig = { hooks: {} };
+
+  for (const [event, eventConfigs] of Object.entries(config.hooks)) {
+    if (!VALID_HOOK_EVENTS.has(event)) {
+      console.warn(`${tag} Unknown hook event "${event}", skipping entire group`);
+      continue;
+    }
+
+    if (!Array.isArray(eventConfigs)) continue;
+
+    const validConfigs: HookEventConfig[] = [];
+
+    for (const eventConfig of eventConfigs) {
+      if (!Array.isArray(eventConfig?.hooks)) continue;
+
+      const validHooks: HookDefinition[] = [];
+
+      for (const hook of eventConfig.hooks) {
+        if (hook.type !== 'command' && hook.type !== 'prompt') {
+          console.warn(`${tag} [${event}] Invalid type "${hook.type as string}", skipping`);
+          continue;
+        }
+        if (hook.type === 'command' && !hook.command) {
+          console.warn(`${tag} [${event}] type=command missing "command" field, skipping`);
+          continue;
+        }
+        if (hook.type === 'prompt' && !hook.prompt) {
+          console.warn(`${tag} [${event}] type=prompt missing "prompt" field, skipping`);
+          continue;
+        }
+
+        // blocking=true 但无 timeout：补兜底值，防止 agent 无限卡死
+        if (hook.blocking && !hook.timeout) {
+          console.warn(
+            `${tag} [${event}] blocking=true without timeout, applying default ${MARKETPLACE_BLOCKING_DEFAULT_TIMEOUT}s`
+          );
+          validHooks.push({ ...hook, timeout: MARKETPLACE_BLOCKING_DEFAULT_TIMEOUT });
+          continue;
+        }
+
+        validHooks.push(hook);
+      }
+
+      if (validHooks.length > 0) {
+        validConfigs.push({ ...eventConfig, hooks: validHooks });
+      }
+    }
+
+    if (validConfigs.length > 0) {
+      result.hooks[event] = validConfigs;
+    }
+  }
+
+  return result;
 }
 
 /**
@@ -87,22 +174,36 @@ function resolveVariables(str: string, env: Record<string, string>): string {
 }
 
 /**
- * 加载并合并 hook 配置（全局 + workspace）
+ * 加载并合并 hook 配置（全局 + workspace + 插件市场来源）
  *
  * 查找路径:
  *   全局: ~/.semaclaw/hooks.json
  *   Workspace: <workspaceDir>/.semaclaw/hooks.json
+ *   extraFiles: 插件市场各来源的 hooks.json（已按优先级排序）
  */
 export function loadMergedHookConfig(
   globalConfigDir: string,
   workspaceDir?: string,
+  extraFiles?: string[],
 ): HookConfig {
   const globalHooks = loadHookJson(path.join(globalConfigDir, 'hooks.json'));
   const workspaceHooks = workspaceDir
     ? loadHookJson(path.join(workspaceDir, '.semaclaw', 'hooks.json'))
     : null;
 
-  return mergeHookConfigs(globalHooks, workspaceHooks);
+  let merged = mergeHookConfigs(globalHooks, workspaceHooks);
+
+  // Merge marketplace hook files: load → validate/filter → merge (additive)
+  for (const filePath of extraFiles ?? []) {
+    const raw = loadHookJson(filePath);
+    if (!raw) continue;
+    const validated = validateAndFilterMarketplaceHookConfig(raw, filePath);
+    if (Object.keys(validated.hooks).length > 0) {
+      merged = mergeHookConfigs(merged, validated);
+    }
+  }
+
+  return merged;
 }
 
 /**
@@ -125,9 +226,10 @@ export function resolveHookEnv(
 export function loadAndResolveHookConfig(
   globalConfigDir: string,
   workspaceDir?: string,
+  extraFiles?: string[],
 ): { hookConfig: HookConfig | undefined; hookEnv: Record<string, string> } {
   const hookEnv = resolveHookEnv(globalConfigDir, workspaceDir);
-  const rawConfig = loadMergedHookConfig(globalConfigDir, workspaceDir);
+  const rawConfig = loadMergedHookConfig(globalConfigDir, workspaceDir, extraFiles);
 
   if (Object.keys(rawConfig.hooks).length === 0) {
     return { hookConfig: undefined, hookEnv };

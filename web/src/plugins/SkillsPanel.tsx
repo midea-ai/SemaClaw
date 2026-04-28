@@ -53,6 +53,17 @@ const SOURCE_COLOR: Record<string, string> = {
   workspace: 'bg-amber-100 text-amber-700',
 };
 
+function getSourceLabel(source: string): string {
+  if (source.startsWith('marketplace:')) return source.slice('marketplace:'.length);
+  return SOURCE_LABEL[source] ?? source;
+}
+
+function getSourceColor(source: string): string {
+  if (source.startsWith('marketplace:')) return 'bg-lime-200 text-lime-700';
+  return SOURCE_COLOR[source] ?? 'bg-gray-100 text-gray-600';
+}
+
+
 // ─── 工具函数 ─────────────────────────────────────────────────────────────────
 
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
@@ -69,7 +80,14 @@ function groupBySource(skills: LocalSkill[]) {
   const groups = SOURCE_ORDER
     .map(src => ({ source: src, skills: skills.filter(s => s.source === src) }))
     .filter(g => g.skills.length > 0);
-  const others = skills.filter(s => !knownSources.has(s.source));
+
+  // Collect marketplace sources (source starts with 'marketplace:')
+  const marketplaceSources = [...new Set(skills.filter(s => s.source.startsWith('marketplace:')).map(s => s.source))];
+  for (const src of marketplaceSources) {
+    groups.push({ source: src, skills: skills.filter(s => s.source === src) });
+  }
+
+  const others = skills.filter(s => !knownSources.has(s.source) && !s.source.startsWith('marketplace:'));
   if (others.length > 0) groups.push({ source: 'other', skills: others });
   return groups;
 }
@@ -78,8 +96,8 @@ function groupBySource(skills: LocalSkill[]) {
 
 function SourceBadge({ source, className = '' }: { source: string; className?: string }) {
   return (
-    <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full ${SOURCE_COLOR[source] ?? 'bg-gray-100 text-gray-500'} ${className}`}>
-      {SOURCE_LABEL[source] ?? source}
+    <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full ${getSourceColor(source)} ${className}`}>
+      {getSourceLabel(source)}
     </span>
   );
 }
