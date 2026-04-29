@@ -398,6 +398,7 @@ async function main(): Promise<void> {
     agentPool.getPermissionBridge(),
     () => agentPool.getSkipPermsForVirtual(),
   );
+  virtualWorkerPool.setGetMarketplaceHookFiles(() => marketplaceManager.getHookFiles());
   dispatchBridge.setVirtualWorkerPool(personaRegistry, virtualWorkerPool);
 
   agentPool.setGroupQueue(groupQueue);

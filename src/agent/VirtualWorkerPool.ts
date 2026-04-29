@@ -17,6 +17,7 @@ import type { GroupBinding } from '../types';
 import { config } from '../config';
 import { readDisabledSkills } from '../skills/disabled.js';
 import { expandSkillsDir } from '../skills/expand.js';
+import { loadAndResolveHookConfig } from '../hooks/HookConfigLoader';
 
 export type TodosNotifyFn = (agentJid: string, agentName: string, todos: { content: string; status: string; activeForm?: string }[]) => void;
 
@@ -70,6 +71,8 @@ export class VirtualWorkerPool {
   private permissionBridge: PermissionBridge | null = null;
   /** 由外部注入：获取当前是否跳过权限审批（随主 agent 配置） */
   private getSkipPerms: (() => boolean) | null = null;
+  /** 由外部注入：获取插件市场 hook 文件列表（主进程可用，virtual-server 子进程降级为空） */
+  private getMarketplaceHookFiles: (() => string[]) | null = null;
 
   setTodosNotify(fn: TodosNotifyFn): void {
     this.todosNotify = fn;
@@ -78,6 +81,10 @@ export class VirtualWorkerPool {
   setPermissionBridge(bridge: PermissionBridge, getSkipPerms: () => boolean): void {
     this.permissionBridge = bridge;
     this.getSkipPerms = getSkipPerms;
+  }
+
+  setGetMarketplaceHookFiles(fn: () => string[]): void {
+    this.getMarketplaceHookFiles = fn;
   }
 
   async run(
@@ -131,6 +138,11 @@ export class VirtualWorkerPool {
       // 权限配置：随主 agent 配置
       const skipPerms = this.getSkipPerms?.() ?? true;
 
+      // 加载 hook 配置（全局 ~/.semaclaw/ + workspace + 插件市场）
+      const globalConfigDir = path.dirname(config.paths.globalConfigPath);
+      const marketplaceHookFiles = this.getMarketplaceHookFiles?.() ?? [];
+      const { hookConfig, hookEnv } = loadAndResolveHookConfig(globalConfigDir, workspaceDir, marketplaceHookFiles);
+
       // Create temporary SemaCore instance (no MCP servers)
       core = new SemaCore({
         instanceId,
@@ -145,7 +157,8 @@ export class VirtualWorkerPool {
         skipSkillPermission: skipPerms,
         skipMCPToolPermission: true,
         skipMCPInit: true,
-      });
+        ...(hookConfig ? { hooks: hookConfig, hookEnv } : {}),
+      } as any);
 
       // createSession with timeout + abort protection
       let sessionTimer: ReturnType<typeof setTimeout> | null = null;
