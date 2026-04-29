@@ -5,7 +5,7 @@
  * 右侧：来源内的 plugin 卡片，插件级开关 + 批量操作
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 
 // ─── 类型 ─────────────────────────────────────────────────────────────────────
 
@@ -24,6 +24,7 @@ interface MarketplaceSource {
 
 interface PluginSkill { name: string; description: string; disabled: boolean }
 interface PluginSubagent { name: string; description: string; disabled: boolean }
+interface PluginMCPServer { name: string; transport: string; description?: string; useTools: string[] | null }
 
 interface MarketplacePlugin {
   name: string;
@@ -39,8 +40,10 @@ interface MarketplacePlugin {
   skillCount: number;
   subagentCount: number;
   hasHooks: boolean;
+  mcpServerCount: number;
   skills: PluginSkill[];
   subagents: PluginSubagent[];
+  mcpServers: PluginMCPServer[];
 }
 
 interface SourceInfo extends MarketplaceSource {
@@ -237,24 +240,182 @@ function SubItemRow({
 
 // ─── Plugin Card ──────────────────────────────────────────────────────────────
 
+type MCPConnStatus = 'connected' | 'connecting' | 'error' | 'disconnected';
+
+function MCPStatusDot({ status }: { status: MCPConnStatus | undefined }) {
+  if (!status) return null;
+  const colors: Record<MCPConnStatus, string> = {
+    connected: 'bg-green-400',
+    connecting: 'bg-yellow-400 animate-pulse',
+    error: 'bg-red-400',
+    disconnected: 'bg-gray-300',
+  };
+  const labels: Record<MCPConnStatus, string> = {
+    connected: 'Connected',
+    connecting: 'Connecting…',
+    error: 'Connection error',
+    disconnected: 'Disconnected',
+  };
+  return (
+    <span className="flex items-center gap-1" title={labels[status]}>
+      <span className={`inline-block w-1.5 h-1.5 rounded-full flex-shrink-0 ${colors[status]}`} />
+      <span className="text-[10px] text-gray-400">{labels[status]}</span>
+    </span>
+  );
+}
+
+function MCPServerRow({
+  server,
+  sourceId,
+  pluginName,
+  pluginEnabled,
+  connStatus,
+  availableTools,
+  onReload,
+}: {
+  server: PluginMCPServer;
+  sourceId: string;
+  pluginName: string;
+  pluginEnabled: boolean;
+  connStatus?: MCPConnStatus;
+  availableTools?: { name: string; description?: string }[];
+  onReload: () => void;
+}) {
+  const [savingTool, setSavingTool] = useState<string | null>(null);
+
+  const hasTools = availableTools && availableTools.length > 0;
+
+  function isEnabled(toolName: string) {
+    return server.useTools === null || server.useTools.includes(toolName);
+  }
+
+  async function saveUseTools(useTools: string[] | null) {
+    await api(`/api/marketplace/sources/${sourceId}/plugins/${encodeURIComponent(pluginName)}/mcp/${encodeURIComponent(server.name)}/use-tools`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ useTools }),
+    });
+    onReload();
+  }
+
+  async function toggleTool(toolName: string) {
+    setSavingTool(toolName);
+    try {
+      const total = availableTools!.length;
+      let next: string[] | null;
+      if (server.useTools === null) {
+        // all enabled → disable just this one
+        next = availableTools!.map(t => t.name).filter(n => n !== toolName);
+      } else if (server.useTools.includes(toolName)) {
+        // disable it
+        const removed = server.useTools.filter(n => n !== toolName);
+        next = removed.length === total ? null : removed;
+      } else {
+        // enable it
+        const added = [...server.useTools, toolName];
+        next = added.length === total ? null : added;
+      }
+      await saveUseTools(next);
+    } finally {
+      setSavingTool(null);
+    }
+  }
+
+  async function toggleAll() {
+    const allEnabled = server.useTools === null;
+    await saveUseTools(allEnabled ? [] : null);
+  }
+
+  const enabledCount = hasTools
+    ? (server.useTools === null ? availableTools!.length : server.useTools.filter(n => availableTools!.some(t => t.name === n)).length)
+    : 0;
+
+  return (
+    <div className="pl-10 pr-4 py-1.5">
+      {/* Server header */}
+      <div className="flex items-center gap-1.5 flex-wrap mb-1">
+        <svg className="w-3.5 h-3.5 text-blue-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M14.25 9.75 16.5 12l-2.25 2.25m-4.5 0L7.5 12l2.25-2.25M6 20.25h12A2.25 2.25 0 0 0 20.25 18V6A2.25 2.25 0 0 0 18 3.75H6A2.25 2.25 0 0 0 3.75 6v12A2.25 2.25 0 0 0 6 20.25Z" />
+        </svg>
+        <span className={`text-[11px] font-medium ${pluginEnabled ? 'text-gray-600' : 'text-gray-400'}`}>{server.name}</span>
+        <span className="text-[10px] font-mono text-blue-500 bg-blue-50 border border-blue-100 rounded px-1 py-0.5">{server.transport}</span>
+        <MCPStatusDot status={connStatus} />
+        {hasTools && (
+          <span className="text-[10px] text-gray-400 ml-auto">{enabledCount}/{availableTools!.length} tools</span>
+        )}
+      </div>
+      {server.description && (
+        <p className="text-[11px] text-gray-400 mb-1 pl-5">{server.description}</p>
+      )}
+
+      {/* Tool list */}
+      {hasTools ? (
+        <div className="pl-5 space-y-0.5">
+          {/* Select-all row */}
+          <label className="flex items-center gap-2 py-0.5 cursor-pointer group">
+            <input
+              type="checkbox"
+              checked={server.useTools === null}
+              onChange={() => void toggleAll()}
+              disabled={!!savingTool}
+              className="w-3 h-3 rounded accent-violet-500 cursor-pointer"
+            />
+            <span className="text-[11px] font-medium text-gray-500 group-hover:text-gray-700">All tools</span>
+          </label>
+          <div className="border-t border-gray-100 pt-0.5">
+            {availableTools!.map(tool => (
+              <label key={tool.name} className="flex items-start gap-2 py-0.5 cursor-pointer group">
+                <input
+                  type="checkbox"
+                  checked={isEnabled(tool.name)}
+                  onChange={() => void toggleTool(tool.name)}
+                  disabled={savingTool === tool.name}
+                  className="w-3 h-3 rounded accent-violet-500 mt-0.5 flex-shrink-0 cursor-pointer"
+                />
+                <span className="min-w-0">
+                  <span className={`text-[11px] font-mono ${savingTool === tool.name ? 'text-gray-300' : isEnabled(tool.name) ? 'text-gray-600' : 'text-gray-300'}`}>
+                    {tool.name}
+                  </span>
+                  {tool.description && (
+                    <span className="text-[10px] text-gray-400 ml-1.5">{tool.description}</span>
+                  )}
+                </span>
+              </label>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <div className="pl-5 text-[10px] text-gray-400 italic">
+          {connStatus === 'connecting' ? 'Loading tools…' : connStatus === 'connected' ? 'No tools' : 'Connect to see tools'}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function PluginCard({
   plugin,
   onToggle,
   onToggleSkill,
   onToggleSubagent,
+  mcpStatus,
+  onReload,
 }: {
   plugin: MarketplacePlugin;
   onToggle: (plugin: MarketplacePlugin, enabled: boolean) => void;
   onToggleSkill: (name: string, enabled: boolean) => Promise<void>;
   onToggleSubagent: (name: string, enabled: boolean) => Promise<void>;
+  mcpStatus: Record<string, { status: string; error?: string; tools?: { name: string; description?: string }[] }>;
+  onReload: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const hasSubItems = plugin.skills.length > 0 || plugin.subagents.length > 0 || plugin.hasHooks;
+  const hasSubItems = plugin.skills.length > 0 || plugin.subagents.length > 0 || plugin.hasHooks || plugin.mcpServers.length > 0;
 
   const contentParts: string[] = [];
   if (plugin.skillCount > 0) contentParts.push(`${plugin.skillCount} skill${plugin.skillCount !== 1 ? 's' : ''}`);
   if (plugin.subagentCount > 0) contentParts.push(`${plugin.subagentCount} subagent${plugin.subagentCount !== 1 ? 's' : ''}`);
   if (plugin.hasHooks) contentParts.push('hooks');
+  if (plugin.mcpServerCount > 0) contentParts.push(`${plugin.mcpServerCount} MCP server${plugin.mcpServerCount !== 1 ? 's' : ''}`);
   const contentSummary = contentParts.length > 0 ? contentParts.join(' · ') : 'No content';
 
   return (
@@ -353,6 +514,29 @@ function PluginCard({
               </svg>
               <span className="text-[11px] text-gray-400">Hooks config — active when plugin is enabled</span>
             </div>
+          )}
+          {plugin.mcpServers.length > 0 && (
+            <>
+              <div className="px-4 pt-2 pb-1">
+                <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">MCP Servers</span>
+              </div>
+              {plugin.mcpServers.map(server => {
+                const statusKey = `mkt__${plugin.name}__${server.name}`;
+                const statusEntry = mcpStatus[statusKey];
+                return (
+                  <MCPServerRow
+                    key={server.name}
+                    server={server}
+                    sourceId={plugin.sourceId}
+                    pluginName={plugin.name}
+                    pluginEnabled={plugin.enabled}
+                    connStatus={statusEntry?.status as MCPConnStatus | undefined}
+                    availableTools={statusEntry?.tools}
+                    onReload={onReload}
+                  />
+                );
+              })}
+            </>
           )}
         </div>
       )}
@@ -486,6 +670,8 @@ export function MarketplacePanel() {
   const [syncingId, setSyncingId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [mcpStatus, setMcpStatus] = useState<Record<string, { status: string; error?: string; tools?: { name: string; description?: string }[] }>>({});
+  const mcpPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -505,6 +691,17 @@ export function MarketplacePanel() {
   }, [selectedId]);
 
   useEffect(() => { void loadData(); }, []);
+
+  useEffect(() => {
+    const fetchStatus = () => {
+      api<Record<string, { status: string; error?: string; tools?: { name: string; description?: string }[] }>>('/api/marketplace/mcp-status')
+        .then(setMcpStatus)
+        .catch(() => {/* ignore */});
+    };
+    fetchStatus();
+    mcpPollRef.current = setInterval(fetchStatus, 5000);
+    return () => { if (mcpPollRef.current) clearInterval(mcpPollRef.current); };
+  }, []);
 
   const handleSync = async (id: string) => {
     setSyncingId(id);
@@ -717,6 +914,8 @@ export function MarketplacePanel() {
                     onToggle={handleTogglePlugin}
                     onToggleSkill={handleToggleSkill}
                     onToggleSubagent={handleToggleSubagent}
+                    mcpStatus={mcpStatus}
+                    onReload={loadData}
                   />
                 ))
               )}

@@ -12,8 +12,10 @@ export interface MarketplaceSource {
 }
 
 // Plugin-level toggle state: plugins[name] = true → enabled; absent = disabled (default-off)
+// mcpUseTools key: `${pluginName}/${serverName}` → string[] to allowlist tools, null to clear override
 export interface MarketplaceSourceItemState {
   plugins: Record<string, boolean>;
+  mcpUseTools?: Record<string, string[] | null>;
 }
 
 export interface MarketplaceConfig {
@@ -38,6 +40,13 @@ export interface MarketplacePluginSubagent {
   disabled: boolean; // from disabled-subagents.json
 }
 
+export interface MarketplacePluginMCPServer {
+  name: string;
+  transport: string;
+  description?: string;
+  useTools: string[] | null; // null = all tools; string[] = allowlist (user override or plugin default)
+}
+
 export interface MarketplacePlugin {
   name: string;
   description: string;
@@ -53,9 +62,11 @@ export interface MarketplacePlugin {
   skillCount: number;
   subagentCount: number;
   hasHooks: boolean;
+  mcpServerCount: number;
   // detailed sub-items (for expanded view)
   skills: MarketplacePluginSkill[];
   subagents: MarketplacePluginSubagent[];
+  mcpServers: MarketplacePluginMCPServer[];
 }
 
 export interface MarketplaceSourceInfo extends MarketplaceSource {

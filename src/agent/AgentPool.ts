@@ -123,6 +123,10 @@ export class AgentPool {
   private groupQueue: GroupQueue | null = null;
   /** jid → dispatch task 期间的临时工作目录（完成后 revert） */
   private marketplaceManager: MarketplaceManager | null = null;
+  private userMCPServerNames = new Set<string>();
+  /** marketplace MCP 预热用的最小化 SemaCore，无需真实 session，仅用于连接 MCP */
+  private probeCore?: SemaCore;
+  private mcpWarmupStarted = false;
   private dispatchWorkspaceOverrides = new Map<string, string>();
   /** jid 集合：当前正在实际执行 dispatch task 的 agent（非仅入队） */
   private dispatchExecuting = new Set<string>();
@@ -230,12 +234,118 @@ export class AgentPool {
     this.marketplaceManager = mm;
   }
 
+  /** 插件启用/禁用后，对所有活跃 engine（含 probeCore）reconcile marketplace MCP 服务器（mkt__ 前缀）*/
+  async reloadMarketplaceMCPServers(): Promise<void> {
+    const desired = this.marketplaceManager?.getMCPServerDefs() ?? [];
+    const desiredNames = new Set(desired.map(c => c.name));
+
+    const targets = [...this.cores.values(), ...(this.probeCore ? [this.probeCore] : [])];
+    for (const core of targets) {
+      const allInfos = [
+        ...(core.getMCPServerConfigs().get('project') ?? []),
+        ...(core.getMCPServerConfigs().get('user') ?? []),
+      ];
+      for (const { config: cfg } of allInfos) {
+        if (cfg.name.startsWith('mkt__') && !desiredNames.has(cfg.name)) {
+          void core.removeMCPServer(cfg.name, 'project');
+        }
+      }
+      for (const cfg of desired) {
+        void core.addOrUpdateMCPServer(cfg as Parameters<typeof core.addOrUpdateMCPServer>[0], 'project');
+      }
+    }
+
+    // 如果还没有 probeCore 且现在有了新的 marketplace MCP，重置预热标志让 warmup 可重新触发
+    if (!this.probeCore && desired.length > 0 && this.cores.size === 0) {
+      this.mcpWarmupStarted = false;
+    }
+  }
+
+  /** 用户 MCP 配置保存后，对所有活跃 engine reconcile 用户全局 MCP 服务器 */
+  async reloadUserMCPServers(newConfigs: Array<Record<string, unknown> & { name: string }>): Promise<void> {
+    const newNames = new Set(newConfigs.map(c => c.name));
+    for (const core of this.cores.values()) {
+      for (const name of this.userMCPServerNames) {
+        if (!newNames.has(name)) {
+          void core.removeMCPServer(name, 'project');
+        }
+      }
+      for (const cfg of newConfigs) {
+        if (cfg['enabled'] !== false) {
+          void core.addOrUpdateMCPServer(cfg as unknown as Parameters<typeof core.addOrUpdateMCPServer>[0], 'project');
+        }
+      }
+    }
+    this.userMCPServerNames = newNames;
+  }
+
   /** 读取当前权限开关状态 */
   getPermissionsConfig(): { skipMainAgentPermissions: boolean; skipAllAgentsPermissions: boolean } {
     return {
       skipMainAgentPermissions: this.skipMainAgentPermissions,
       skipAllAgentsPermissions: this.skipAllAgentsPermissions,
     };
+  }
+
+  /** 在没有活跃 agent 时预热 marketplace MCP 连接，使 UI 能立即展示工具列表。
+   *  只运行一次；有真实 core 后自动降级（getMarketplaceMCPStatus 优先用真实 core）。*/
+  warmUpMarketplaceMCPs(): void {
+    if (this.mcpWarmupStarted || this.cores.size > 0) return;
+    const mcpDefs = this.marketplaceManager?.getMCPServerDefs() ?? [];
+    if (mcpDefs.length === 0) return;
+
+    this.mcpWarmupStarted = true;
+    void (async () => {
+      try {
+        const probeDir = path.join(os.homedir(), '.semaclaw', '__mcp_probe__');
+        fs.mkdirSync(path.join(probeDir, '.sema'), { recursive: true });
+        fs.writeFileSync(path.join(probeDir, '.sema', 'mcp.json'), JSON.stringify({ mcpServers: {} }), 'utf-8');
+
+        const core = new SemaCore({
+          instanceId: '__mcp_probe__',
+          agentDataDir: probeDir,
+          workingDir: os.homedir(),
+          agentMode: 'Agent',
+          skipMCPInit: true,
+          logLevel: 'error',
+        } as any);
+
+        for (const cfg of mcpDefs) {
+          try {
+            await Promise.race([
+              core.addOrUpdateMCPServer(cfg as Parameters<typeof core.addOrUpdateMCPServer>[0], 'project'),
+              new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), 180_000)),
+            ]);
+          } catch (e) {
+            console.warn(`[AgentPool:probe] MCP warmup failed for ${cfg.name}: ${e}`);
+          }
+        }
+        this.probeCore = core;
+      } catch (e) {
+        console.warn(`[AgentPool:probe] probe core init failed: ${e}`);
+        this.mcpWarmupStarted = false; // allow retry
+      }
+    })();
+  }
+
+  /** 返回所有 marketplace MCP 服务器的连接状态及工具列表（取第一个活跃 engine 的状态）。
+   *  Key 为完整命名空间名称（mkt__pluginName__serverName），无活跃 agent 时返回空对象。 */
+  getMarketplaceMCPStatus(): Record<string, { status: string; error?: string; tools?: { name: string; description?: string }[] }> {
+    const core = (this.cores.values().next().value ?? this.probeCore) as (typeof this.cores extends Map<string, infer V> ? V : never) | undefined;
+    if (!core) return {};
+    const result: Record<string, { status: string; error?: string; tools?: { name: string; description?: string }[] }> = {};
+    for (const infos of core.getMCPServerConfigs().values()) {
+      for (const info of infos) {
+        if (info.config.name.startsWith('mkt__')) {
+          result[info.config.name] = {
+            status: info.status,
+            error: info.error,
+            tools: info.capabilities?.tools?.map(t => ({ name: t.name, description: t.description })),
+          };
+        }
+      }
+    }
+    return result;
   }
 
   /** 虚拟 agent 继承主 agent 的权限配置 */
@@ -558,13 +668,13 @@ export class AgentPool {
     this.bindEvents(core, binding, cleanupPermission);
 
     try {
-    /** 带 30s 超时的 addOrUpdateMCPServer，失败时仅打印 warning 不中断启动 */
-    const addMCP = async (cfg: Parameters<typeof core.addOrUpdateMCPServer>[0], label: string) => {
+    /** 带超时的 addOrUpdateMCPServer，失败时仅打印 warning 不中断启动。内置服务默认 30s，marketplace/用户 MCP 传 180s */
+    const addMCP = async (cfg: Parameters<typeof core.addOrUpdateMCPServer>[0], label: string, timeoutMs = 30_000) => {
       try {
         await Promise.race([
           core.addOrUpdateMCPServer(cfg, 'project'),
           new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error(`${label} MCP connect timeout (30s)`)), 30_000)
+            setTimeout(() => reject(new Error(`${label} MCP connect timeout (${timeoutMs / 1000}s)`)), timeoutMs)
           ),
         ]);
       } catch (e) {
@@ -636,6 +746,27 @@ export class AgentPool {
       const feishuCreds = this.resolveFeishuCredentials(binding.botToken ?? undefined);
       if (feishuCreds) {
         await addMCP(feishuWikiMCPConfig(feishuCreds), 'FeishuWiki');
+      }
+    }
+
+    // 注入 Marketplace 插件 MCP 服务器（首次可能需要下载依赖，给 180s）
+    for (const cfg of this.marketplaceManager?.getMCPServerDefs() ?? []) {
+      await addMCP(cfg as Parameters<typeof core.addOrUpdateMCPServer>[0], `Marketplace[${cfg.name}]`, 180_000);
+    }
+
+    // 注入用户全局 MCP 配置（~/.semaclaw/mcp.json，同样给 180s）
+    const userMCPPath = path.join(os.homedir(), '.semaclaw', 'mcp.json');
+    if (fs.existsSync(userMCPPath)) {
+      try {
+        const userMCPData = JSON.parse(fs.readFileSync(userMCPPath, 'utf-8')) as { mcpServers?: Record<string, unknown> };
+        for (const [name, cfg] of Object.entries(userMCPData.mcpServers ?? {})) {
+          if ((cfg as Record<string, unknown>).enabled !== false) {
+            await addMCP({ ...(cfg as Parameters<typeof core.addOrUpdateMCPServer>[0]), name }, `User[${name}]`, 180_000);
+            this.userMCPServerNames.add(name);
+          }
+        }
+      } catch (e) {
+        console.warn(`[AgentPool] Failed to load user MCP config: ${e}`);
       }
     }
 

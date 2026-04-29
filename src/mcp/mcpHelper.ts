@@ -11,6 +11,11 @@ import type { MCPServerConfig } from 'sema-core/mcp';
 // 检测运行模式：tsx（开发）还是编译后的 JS
 const isDevMode = __filename.endsWith('.ts');
 
+// dev 模式下不依赖 PATH 中的裸 `tsx`，改用绝对路径的 tsx CLI 以兼容非 npm run dev 启动方式
+const tsxCliPath = isDevMode
+  ? path.join(__dirname, '..', '..', 'node_modules', 'tsx', 'dist', 'cli.mjs')
+  : '';
+
 // 子进程需要继承父进程的 PATH 等环境变量，否则在 Windows 上找不到 tsx/node
 // SEMACLAW_* 变量在各函数中单独覆盖
 const baseEnv = process.env as Record<string, string>;
@@ -30,8 +35,8 @@ export function scheduleMCPConfig(opts: {
   return {
     name: 'semaclaw-schedule',
     transport: 'stdio',
-    command: isDevMode ? 'tsx' : process.execPath,
-    args: [serverPath],
+    command: process.execPath,
+    args: isDevMode ? [tsxCliPath, serverPath] : [serverPath],
     env: {
       ...baseEnv,
       SEMACLAW_DB_PATH: opts.dbPath,
@@ -59,8 +64,8 @@ export function workspaceMCPConfig(opts: {
   return {
     name: 'semaclaw-workspace',
     transport: 'stdio',
-    command: isDevMode ? 'tsx' : process.execPath,
-    args: [serverPath],
+    command: process.execPath,
+    args: isDevMode ? [tsxCliPath, serverPath] : [serverPath],
     env: {
       ...baseEnv,
       SEMACLAW_WORKSPACE_STATE_FILE: opts.stateFile,
@@ -92,8 +97,8 @@ export function memoryMCPConfig(opts: {
   return {
     name: 'semaclaw-memory',
     transport: 'stdio',
-    command: isDevMode ? 'tsx' : process.execPath,
-    args: [serverPath],
+    command: process.execPath,
+    args: isDevMode ? [tsxCliPath, serverPath] : [serverPath],
     env: {
       ...baseEnv,
       SEMACLAW_DB_PATH: opts.dbPath,
@@ -123,8 +128,8 @@ export function sendMCPConfig(opts: {
   return {
     name: 'semaclaw-send',
     transport: 'stdio',
-    command: isDevMode ? 'tsx' : process.execPath,
-    args: [serverPath],
+    command: process.execPath,
+    args: isDevMode ? [tsxCliPath, serverPath] : [serverPath],
     env: {
       ...baseEnv,
       SEMACLAW_SEND_BRIDGE_PORT: String(opts.bridgePort),
@@ -151,8 +156,8 @@ export function dispatchMCPConfig(opts: {
   return {
     name: 'semaclaw-dispatch',
     transport: 'stdio',
-    command: isDevMode ? 'tsx' : process.execPath,
-    args: [serverPath],
+    command: process.execPath,
+    args: isDevMode ? [tsxCliPath, serverPath] : [serverPath],
     env: {
       ...baseEnv,
       SEMACLAW_DISPATCH_STATE_PATH: opts.statePath,
@@ -177,8 +182,8 @@ export function virtualMCPConfig(opts: {
   return {
     name: 'semaclaw-virtual',
     transport: 'stdio',
-    command: isDevMode ? 'tsx' : process.execPath,
-    args: [serverPath],
+    command: process.execPath,
+    args: isDevMode ? [tsxCliPath, serverPath] : [serverPath],
     env: {
       ...baseEnv,
       SEMACLAW_AGENTS_CONFIG_DIR: opts.agentsConfigDir,
@@ -203,8 +208,8 @@ export function feishuWikiMCPConfig(opts: {
   return {
     name: 'semaclaw-feishu-wiki',
     transport: 'stdio',
-    command: isDevMode ? 'tsx' : process.execPath,
-    args: [serverPath],
+    command: process.execPath,
+    args: isDevMode ? [tsxCliPath, serverPath] : [serverPath],
     env: {
       FEISHU_APP_ID: opts.appId,
       FEISHU_APP_SECRET: opts.appSecret,

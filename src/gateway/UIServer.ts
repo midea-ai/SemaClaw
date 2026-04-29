@@ -637,6 +637,63 @@ export class UIServer {
       }
     }
 
+    // ── User global MCP config ───────────────────────────────────────
+    if (urlPath === '/api/mcp') {
+      const mcpConfigPath = path.join(os.homedir(), '.semaclaw', 'mcp.json');
+      if (req.method === 'GET') {
+        try {
+          const raw = fs.readFileSync(mcpConfigPath, 'utf-8');
+          res.writeHead(200, { 'Content-Type': 'application/json' }).end(raw);
+        } catch {
+          res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ mcpServers: {} }, null, 2));
+        }
+        return;
+      }
+      if (req.method === 'PUT') {
+        const body = await this.readBody(req);
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(body);
+        } catch (e) {
+          res.writeHead(400, { 'Content-Type': 'application/json' }).end(JSON.stringify({ error: `Invalid JSON: ${(e as Error).message}` }));
+          return;
+        }
+        if (typeof parsed !== 'object' || parsed === null || !('mcpServers' in parsed) || typeof (parsed as Record<string, unknown>).mcpServers !== 'object') {
+          res.writeHead(400, { 'Content-Type': 'application/json' }).end(JSON.stringify({ error: 'Root object must have a "mcpServers" key of type object' }));
+          return;
+        }
+        const servers = (parsed as Record<string, unknown>).mcpServers as Record<string, unknown>;
+        for (const [name, cfg] of Object.entries(servers)) {
+          if (typeof cfg !== 'object' || cfg === null) {
+            res.writeHead(400, { 'Content-Type': 'application/json' }).end(JSON.stringify({ error: `Server "${name}": config must be an object` }));
+            return;
+          }
+          const transport = (cfg as Record<string, unknown>).transport;
+          if (transport !== 'stdio' && transport !== 'sse' && transport !== 'http') {
+            res.writeHead(400, { 'Content-Type': 'application/json' }).end(JSON.stringify({ error: `Server "${name}": transport must be "stdio", "sse", or "http"` }));
+            return;
+          }
+          if (transport === 'stdio' && !(cfg as Record<string, unknown>).command) {
+            res.writeHead(400, { 'Content-Type': 'application/json' }).end(JSON.stringify({ error: `Server "${name}": stdio transport requires a "command" field` }));
+            return;
+          }
+          if ((transport === 'sse' || transport === 'http') && !(cfg as Record<string, unknown>).url) {
+            res.writeHead(400, { 'Content-Type': 'application/json' }).end(JSON.stringify({ error: `Server "${name}": ${transport} transport requires a "url" field` }));
+            return;
+          }
+        }
+        fs.mkdirSync(path.join(os.homedir(), '.semaclaw'), { recursive: true });
+        fs.writeFileSync(mcpConfigPath, JSON.stringify(parsed, null, 2), 'utf-8');
+        const newConfigs = Object.entries(servers).map(([name, cfg]) => ({
+          ...(cfg as Record<string, unknown>),
+          name,
+        }));
+        void this.agentPool.reloadUserMCPServers(newConfigs);
+        res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ ok: true }));
+        return;
+      }
+    }
+
     if (urlPath === '/api/thinking') {
       if (req.method === 'POST') {
         const body = await this.readBody(req);
@@ -822,6 +879,13 @@ export class UIServer {
         return;
       }
 
+      // GET /api/marketplace/mcp-status — live connection status for all mkt__ MCP servers
+      if (urlPath === '/api/marketplace/mcp-status' && req.method === 'GET') {
+        this.agentPool.warmUpMarketplaceMCPs(); // no-op if already running or real core exists
+        json(this.agentPool.getMarketplaceMCPStatus());
+        return;
+      }
+
       // Source-level routes: /api/marketplace/sources/:id/...
       const sourceMatch = urlPath.match(/^\/api\/marketplace\/sources\/([^/]+)(?:\/(.+))?$/);
       if (sourceMatch) {
@@ -885,6 +949,19 @@ export class UIServer {
           mm.setPluginEnabled(sourceId, pluginName, body.enabled);
           this.agentPool.reloadAllSkills();
           this.personaRegistry?.setExtraDirs(mm.getSubagentDirs());
+          void this.agentPool.reloadMarketplaceMCPServers();
+          json({ ok: true });
+          return;
+        }
+
+        // POST /api/marketplace/sources/:id/plugins/:pluginName/mcp/:serverName/use-tools
+        const mcpUseToolsMatch = sub.match(/^plugins\/([^/]+)\/mcp\/([^/]+)\/use-tools$/);
+        if (mcpUseToolsMatch && req.method === 'POST') {
+          const pluginName = decodeURIComponent(mcpUseToolsMatch[1]);
+          const serverName = decodeURIComponent(mcpUseToolsMatch[2]);
+          const body = JSON.parse(await this.readBody(req)) as { useTools: string[] | null };
+          mm.setMCPServerUseTools(sourceId, pluginName, serverName, body.useTools);
+          void this.agentPool.reloadMarketplaceMCPServers();
           json({ ok: true });
           return;
         }

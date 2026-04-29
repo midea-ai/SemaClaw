@@ -53,6 +53,19 @@ interface PluginJson {
   keywords?: string[];
 }
 
+interface MCPPluginServerDef {
+  name: string;
+  transport: 'stdio' | 'sse' | 'http';
+  description?: string;
+  enabled?: boolean;
+  useTools?: string[] | null;
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  url?: string;
+  headers?: Record<string, string>;
+}
+
 export class MarketplaceManager {
   private config: MarketplaceConfig = { sources: [] };
   private state: MarketplaceStateFile = {};
@@ -290,6 +303,114 @@ export class MarketplaceManager {
     return files;
   }
 
+  /**
+   * Returns MCP server configs for all enabled plugins, with names prefixed `mkt__<pluginName>__<serverName>`.
+   * Higher-priority sources processed last so they overwrite lower-priority same-name entries.
+   */
+  getMCPServerDefs(): MCPPluginServerDef[] {
+    const result = new Map<string, MCPPluginServerDef>();
+    for (const source of this.enabledSourcesByDescPriority()) {
+      const st = this.getSourceState(source.id);
+      for (const plugin of this.findPlugins(source.localPath)) {
+        const meta = this.readPluginJson(plugin.pluginJsonPath);
+        const name = this.pluginName(meta, plugin.dir);
+        if (st.plugins[name] !== true) continue;
+        for (const server of this.readPluginMCPConfig(plugin.dir)) {
+          const useToolsKey = `${name}/${server.name}`;
+          // User override takes precedence over plugin-defined useTools
+          const userOverride = st.mcpUseTools?.[useToolsKey];
+          const prefixed: MCPPluginServerDef = {
+            ...server,
+            name: `mkt__${name}__${server.name}`,
+            ...(userOverride !== undefined ? { useTools: userOverride } : {}),
+          };
+          result.set(prefixed.name, prefixed);
+        }
+      }
+    }
+    return Array.from(result.values());
+  }
+
+  /** Set per-server useTools override for a marketplace plugin MCP server. null clears the override. */
+  setMCPServerUseTools(sourceId: string, pluginName: string, serverName: string, useTools: string[] | null): void {
+    const st = this.ensureSourceState(sourceId);
+    if (!st.mcpUseTools) st.mcpUseTools = {};
+    const key = `${pluginName}/${serverName}`;
+    st.mcpUseTools[key] = useTools;
+    this.saveState();
+  }
+
+  private readPluginMCPConfig(pluginDir: string): MCPPluginServerDef[] {
+    // .mcp.json at plugin root — primary (Claude Code ecosystem format)
+    const dotMcpJson = path.join(pluginDir, '.mcp.json');
+    if (fs.existsSync(dotMcpJson)) {
+      try {
+        const data = JSON.parse(fs.readFileSync(dotMcpJson, 'utf-8')) as Record<string, unknown>;
+        return this.parseDotMcpJson(data, pluginDir);
+      } catch { return []; }
+    }
+    // mcp/mcp.json — semaclaw-specific format with explicit `servers` array
+    const mcpFile = path.join(pluginDir, 'mcp', 'mcp.json');
+    if (fs.existsSync(mcpFile)) {
+      try {
+        const data = JSON.parse(fs.readFileSync(mcpFile, 'utf-8')) as { servers?: MCPPluginServerDef[] };
+        return Array.isArray(data.servers) ? data.servers : [];
+      } catch { return []; }
+    }
+    return [];
+  }
+
+  /**
+   * Parse `.mcp.json` in either format:
+   *   Flat:   { "serverName": { command/url/type... } }
+   *   Nested: { "mcpServers": { "serverName": { ... } } }
+   *
+   * Normalises `type` → `transport` and resolves ${CLAUDE_PLUGIN_ROOT}.
+   * Other ${VAR} references (e.g. ${GITHUB_TOKEN}) are left intact.
+   */
+  private parseDotMcpJson(data: Record<string, unknown>, pluginDir: string): MCPPluginServerDef[] {
+    // Detect nested format
+    let serversObj: Record<string, unknown>;
+    if (typeof data.mcpServers === 'object' && data.mcpServers !== null && !Array.isArray(data.mcpServers)) {
+      serversObj = data.mcpServers as Record<string, unknown>;
+    } else {
+      serversObj = data;
+    }
+
+    const result: MCPPluginServerDef[] = [];
+    for (const [name, cfg] of Object.entries(serversObj)) {
+      if (typeof cfg !== 'object' || cfg === null || Array.isArray(cfg)) continue;
+      const raw = cfg as Record<string, unknown>;
+
+      // Resolve transport: `transport` field, then `type` field, then infer from shape
+      const transportRaw = (raw.transport ?? raw.type) as string | undefined;
+      let transport: 'stdio' | 'sse' | 'http';
+      if (transportRaw === 'stdio' || transportRaw === 'sse' || transportRaw === 'http') {
+        transport = transportRaw;
+      } else if (raw.url) {
+        transport = 'sse';
+      } else {
+        transport = 'stdio';
+      }
+
+      // Resolve ${CLAUDE_PLUGIN_ROOT} in args (leave other ${...} vars intact)
+      const args = Array.isArray(raw.args)
+        ? (raw.args as unknown[]).map(a =>
+            typeof a === 'string' ? a.replace(/\$\{CLAUDE_PLUGIN_ROOT\}/g, pluginDir) : a
+          )
+        : undefined;
+
+      const { type: _type, transport: _transport, args: _args, ...rest } = raw as Record<string, unknown> & { type?: unknown; transport?: unknown; args?: unknown };
+      result.push({
+        ...(rest as Partial<MCPPluginServerDef>),
+        name,
+        transport,
+        ...(args !== undefined ? { args: args as string[] } : {}),
+      });
+    }
+    return result;
+  }
+
   // ── All plugins with state (for API) ─────────────────────────────────────────
 
   getItems(): MarketplaceSourceInfo[] {
@@ -306,7 +427,7 @@ export class MarketplaceManager {
       for (const pluginDef of pluginDefs) {
         const meta = this.readPluginJson(pluginDef.pluginJsonPath);
         const name = this.pluginName(meta, pluginDef.dir);
-        const { skillCount, subagentCount, hasHooks } = this.countPluginContents(pluginDef.dir);
+        const { skillCount, subagentCount, hasHooks, mcpServerCount } = this.countPluginContents(pluginDef.dir);
         const authorRaw = meta.author;
         const author = typeof authorRaw === 'string'
           ? authorRaw
@@ -323,6 +444,17 @@ export class MarketplaceManager {
           disabled: disabledSubagents.has(s.name),
         }));
 
+        const mcpServers = this.readPluginMCPConfig(pluginDef.dir).map(s => {
+          const useToolsKey = `${name}/${s.name}`;
+          const userOverride = st.mcpUseTools?.[useToolsKey];
+          return {
+            name: s.name,
+            transport: s.transport,
+            description: s.description,
+            useTools: userOverride !== undefined ? userOverride : (s.useTools ?? null),
+          };
+        });
+
         plugins.push({
           name,
           description: meta.description ?? '',
@@ -337,8 +469,10 @@ export class MarketplaceManager {
           skillCount,
           subagentCount,
           hasHooks,
+          mcpServerCount,
           skills,
           subagents,
+          mcpServers,
         });
       }
 
@@ -417,7 +551,7 @@ export class MarketplaceManager {
     return meta.name || path.basename(dir);
   }
 
-  private countPluginContents(dir: string): { skillCount: number; subagentCount: number; hasHooks: boolean } {
+  private countPluginContents(dir: string): { skillCount: number; subagentCount: number; hasHooks: boolean; mcpServerCount: number } {
     let skillCount = 0;
     let subagentCount = 0;
 
@@ -457,7 +591,8 @@ export class MarketplaceManager {
     }
 
     const hasHooks = fs.existsSync(path.join(dir, 'hooks', 'hooks.json'));
-    return { skillCount, subagentCount, hasHooks };
+    const mcpServerCount = this.readPluginMCPConfig(dir).length;
+    return { skillCount, subagentCount, hasHooks, mcpServerCount };
   }
 
   /** Returns skill name+description for all skills in a plugin dir. */
