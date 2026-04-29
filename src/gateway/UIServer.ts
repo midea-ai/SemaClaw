@@ -929,6 +929,8 @@ export class UIServer {
         if (sub === 'enable-all' && req.method === 'POST') {
           mm.enableAllInSource(sourceId);
           this.agentPool.reloadAllSkills();
+          this.personaRegistry?.setExtraDirs(mm.getSubagentDirs());
+          void this.agentPool.reloadMarketplaceMCPServers();
           json({ ok: true });
           return;
         }
@@ -937,6 +939,8 @@ export class UIServer {
         if (sub === 'disable-all' && req.method === 'POST') {
           mm.disableAllInSource(sourceId);
           this.agentPool.reloadAllSkills();
+          this.personaRegistry?.setExtraDirs(mm.getSubagentDirs());
+          void this.agentPool.reloadMarketplaceMCPServers();
           json({ ok: true });
           return;
         }
