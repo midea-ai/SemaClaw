@@ -247,11 +247,11 @@ export class AgentPool {
       ];
       for (const { config: cfg } of allInfos) {
         if (cfg.name.startsWith('mkt__') && !desiredNames.has(cfg.name)) {
-          void core.removeMCPServer(cfg.name, 'project');
+          core.removeMCPServer(cfg.name, 'project').catch(err => console.error(`[AgentPool] removeMCPServer ${cfg.name} failed:`, err));
         }
       }
       for (const cfg of desired) {
-        void core.addOrUpdateMCPServer(cfg as Parameters<typeof core.addOrUpdateMCPServer>[0], 'project');
+        core.addOrUpdateMCPServer(cfg as Parameters<typeof core.addOrUpdateMCPServer>[0], 'project').catch(err => console.error(`[AgentPool] addOrUpdateMCPServer ${cfg.name} failed:`, err));
       }
     }
 
@@ -267,12 +267,12 @@ export class AgentPool {
     for (const core of this.cores.values()) {
       for (const name of this.userMCPServerNames) {
         if (!newNames.has(name)) {
-          void core.removeMCPServer(name, 'project');
+          core.removeMCPServer(name, 'project').catch(err => console.error(`[AgentPool] removeMCPServer ${name} failed:`, err));
         }
       }
       for (const cfg of newConfigs) {
         if (cfg['enabled'] !== false) {
-          void core.addOrUpdateMCPServer(cfg as unknown as Parameters<typeof core.addOrUpdateMCPServer>[0], 'project');
+          core.addOrUpdateMCPServer(cfg as unknown as Parameters<typeof core.addOrUpdateMCPServer>[0], 'project').catch(err => console.error(`[AgentPool] addOrUpdateMCPServer ${cfg.name} failed:`, err));
         }
       }
     }

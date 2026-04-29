@@ -871,12 +871,6 @@ export function MarketplacePanel() {
                   Sync
                 </button>
                 <button
-                  onClick={() => void handleEnableAll(selectedSource.id)}
-                  className="px-3 py-1.5 text-xs border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50"
-                >
-                  Enable All
-                </button>
-                <button
                   onClick={() => void handleDisableAll(selectedSource.id)}
                   className="px-3 py-1.5 text-xs border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50"
                 >
