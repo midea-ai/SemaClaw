@@ -897,7 +897,7 @@ export function MarketplacePanel() {
                 <div className="flex flex-col items-center justify-center py-16 text-center">
                   <p className="text-sm text-gray-400">No plugins found</p>
                   <p className="text-xs text-gray-300 mt-1">
-                    Plugins need a <span className="font-mono">.claude-plugin/plugin.json</span> file
+                    Plugins need a <span className="font-mono">.semaclaw-plugin/plugin.json</span> or <span className="font-mono">.claude-plugin/plugin.json</span> file
                   </p>
                 </div>
               ) : (

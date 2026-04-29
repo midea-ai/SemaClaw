@@ -490,19 +490,32 @@ export class MarketplaceManager {
   }
 
   /**
-   * Find all plugin directories (containing .claude-plugin/plugin.json) in a source root.
+   * Resolve plugin.json path for a given directory.
+   * .semaclaw-plugin takes priority over .claude-plugin when both exist.
+   */
+  private resolvePluginJson(dir: string): string | null {
+    const primary = path.join(dir, '.semaclaw-plugin', 'plugin.json');
+    if (fs.existsSync(primary)) return primary;
+    const fallback = path.join(dir, '.claude-plugin', 'plugin.json');
+    if (fs.existsSync(fallback)) return fallback;
+    return null;
+  }
+
+  /**
+   * Find all plugin directories in a source root.
    * Handles three layouts:
-   *   1. Root-is-plugin: source root itself has .claude-plugin/plugin.json
+   *   1. Root-is-plugin: source root itself has a plugin.json
    *   2. Flat: source root contains plugin subdirs directly (external_plugins/discord/)
    *   3. Grouped: source root contains group dirs, each containing plugin subdirs (plugins/code-review/)
+   * Config dir priority: .semaclaw-plugin > .claude-plugin
    */
   private findPlugins(localPath: string): PluginDef[] {
     if (!fs.existsSync(localPath)) return [];
     const results: PluginDef[] = [];
 
     // Layout 1: the source root itself is the plugin
-    const rootPluginJson = path.join(localPath, '.claude-plugin', 'plugin.json');
-    if (fs.existsSync(rootPluginJson)) {
+    const rootPluginJson = this.resolvePluginJson(localPath);
+    if (rootPluginJson) {
       return [{ dir: localPath, pluginJsonPath: rootPluginJson }];
     }
 
@@ -516,8 +529,8 @@ export class MarketplaceManager {
         if (!fs.statSync(entryPath).isDirectory()) continue;
       } catch { continue; }
 
-      const pluginJson = path.join(entryPath, '.claude-plugin', 'plugin.json');
-      if (fs.existsSync(pluginJson)) {
+      const pluginJson = this.resolvePluginJson(entryPath);
+      if (pluginJson) {
         results.push({ dir: entryPath, pluginJsonPath: pluginJson });
         continue; // don't recurse into a plugin dir
       }
@@ -531,8 +544,8 @@ export class MarketplaceManager {
         try {
           if (!fs.statSync(subPath).isDirectory()) continue;
         } catch { continue; }
-        const subPluginJson = path.join(subPath, '.claude-plugin', 'plugin.json');
-        if (fs.existsSync(subPluginJson)) {
+        const subPluginJson = this.resolvePluginJson(subPath);
+        if (subPluginJson) {
           results.push({ dir: subPath, pluginJsonPath: subPluginJson });
         }
       }
