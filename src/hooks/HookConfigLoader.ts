@@ -176,6 +176,29 @@ function resolveVariables(str: string, env: Record<string, string>): string {
 }
 
 /**
+ * 把 marketplace hook 中的 ${SEMACLAW_PLUGIN_ROOT} / ${CLAUDE_PLUGIN_ROOT}
+ * 替换为该插件目录，让插件能引用自己内部携带的脚本。
+ * 其他变量（${SEMACLAW_ROOT} / ${AGENT_WORKSPACE}）保留给 resolveVariablesInConfig 处理。
+ */
+function resolvePluginRootInConfig(config: HookConfig, pluginDir: string): HookConfig {
+  const replace = (s?: string) =>
+    s?.replace(/\$\{SEMACLAW_PLUGIN_ROOT\}/g, pluginDir).replace(/\$\{CLAUDE_PLUGIN_ROOT\}/g, pluginDir);
+
+  const resolved: HookConfig = { hooks: {} };
+  for (const [event, configs] of Object.entries(config.hooks)) {
+    resolved.hooks[event] = configs.map(eventConfig => ({
+      ...eventConfig,
+      hooks: eventConfig.hooks.map(hook => ({
+        ...hook,
+        command: replace(hook.command) ?? hook.command,
+        prompt: replace(hook.prompt) ?? hook.prompt,
+      })),
+    }));
+  }
+  return resolved;
+}
+
+/**
  * 加载并合并 hook 配置（全局 + workspace + 插件市场来源）
  *
  * 查找路径:
@@ -195,14 +218,17 @@ export function loadMergedHookConfig(
 
   let merged = mergeHookConfigs(globalHooks, workspaceHooks);
 
-  // Merge marketplace hook files: load → validate/filter → merge (additive)
+  // Merge marketplace hook files: load → validate/filter → resolve plugin-root vars → merge (additive)
   for (const filePath of extraFiles ?? []) {
     const raw = loadHookJson(filePath);
     if (!raw) continue;
     const validated = validateAndFilterMarketplaceHookConfig(raw, filePath);
-    if (Object.keys(validated.hooks).length > 0) {
-      merged = mergeHookConfigs(merged, validated);
-    }
+    if (Object.keys(validated.hooks).length === 0) continue;
+    // Plugin layout: <pluginDir>/hooks/hooks.json — resolve ${SEMACLAW_PLUGIN_ROOT}/${CLAUDE_PLUGIN_ROOT}
+    // here so each plugin can reference scripts bundled inside itself.
+    const pluginDir = path.dirname(path.dirname(filePath));
+    const resolved = resolvePluginRootInConfig(validated, pluginDir);
+    merged = mergeHookConfigs(merged, resolved);
   }
 
   return merged;
