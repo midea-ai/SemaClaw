@@ -19,10 +19,57 @@ interface Subagent {
   model: string | null;
   maxConcurrent: number;
   filePath: string;
+  source: string;
   disabled: boolean;
 }
 
 type Tab = 'browse' | 'manage';
+
+// ─── 来源标签 / 颜色 ──────────────────────────────────────────────────────────
+
+const SOURCE_LABEL: Record<string, string> = {
+  user: 'Personal',
+};
+
+const SOURCE_COLOR: Record<string, string> = {
+  user: 'bg-purple-100 text-purple-700',
+};
+
+function getSourceLabel(source: string): string {
+  if (source.startsWith('marketplace:')) return source.slice('marketplace:'.length);
+  return SOURCE_LABEL[source] ?? source;
+}
+
+function getSourceColor(source: string): string {
+  if (source.startsWith('marketplace:')) return 'bg-lime-200 text-lime-700';
+  return SOURCE_COLOR[source] ?? 'bg-gray-100 text-gray-600';
+}
+
+function groupBySource(agents: Subagent[]) {
+  const groups: { source: string; agents: Subagent[] }[] = [];
+  // user first
+  const userAgents = agents.filter(a => a.source === 'user');
+  if (userAgents.length > 0) groups.push({ source: 'user', agents: userAgents });
+  // marketplace sources
+  const marketplaceSources = [...new Set(
+    agents.filter(a => a.source.startsWith('marketplace:')).map(a => a.source)
+  )];
+  for (const src of marketplaceSources) {
+    groups.push({ source: src, agents: agents.filter(a => a.source === src) });
+  }
+  // anything else
+  const others = agents.filter(a => a.source !== 'user' && !a.source.startsWith('marketplace:'));
+  if (others.length > 0) groups.push({ source: 'other', agents: others });
+  return groups;
+}
+
+function SourceBadge({ source, className = '' }: { source: string; className?: string }) {
+  return (
+    <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full ${getSourceColor(source)} ${className}`}>
+      {getSourceLabel(source)}
+    </span>
+  );
+}
 
 // ─── 工具函数 ─────────────────────────────────────────────────────────────────
 
@@ -81,7 +128,8 @@ function SubagentCard({ agent, onClick }: { agent: Subagent; onClick: () => void
         {agent.description || <span className="italic text-gray-300">No description</span>}
       </p>
       {/* Footer */}
-      <div className="flex items-center gap-1.5">
+      <div className="flex items-center gap-1.5 flex-wrap">
+        <SourceBadge source={agent.source} />
         <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-purple-50 text-purple-600">
           max {agent.maxConcurrent}
         </span>
@@ -142,6 +190,7 @@ function SubagentDetail({ agent, onBack, onToggleDisabled }: {
         {/* Name + meta */}
         <div className="flex items-center gap-2 flex-1 min-w-0">
           <span className="text-sm font-semibold text-gray-800 truncate">{agent.name}</span>
+          <SourceBadge source={agent.source} />
           <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-purple-50 text-purple-600">
             max {agent.maxConcurrent}
           </span>
@@ -367,6 +416,8 @@ function BrowseTab({ agents, onRefreshAgents, onReloadSuccess }: { agents: Subag
       )
     : agents;
 
+  const groups = groupBySource(localMatched);
+
   if (creating) {
     return (
       <CreateSubagentEditor
@@ -433,13 +484,19 @@ function BrowseTab({ agents, onRefreshAgents, onReloadSuccess }: { agents: Subag
           <p className="text-xs text-gray-400 py-4 text-center">No agents match "{query}".</p>
         )}
 
-        {localMatched.length > 0 && (
-          <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))' }}>
-            {localMatched.map(a => (
-              <SubagentCard key={a.name} agent={a} onClick={() => setSelectedAgent(a)} />
-            ))}
-          </div>
-        )}
+        {groups.map(({ source, agents: groupAgents }) => (
+          <section key={source} className="mb-5">
+            <div className="flex items-center gap-2 mb-2.5">
+              <SourceBadge source={source} />
+              <span className="text-[10px] text-gray-300">{groupAgents.length}</span>
+            </div>
+            <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))' }}>
+              {groupAgents.map(a => (
+                <SubagentCard key={a.name} agent={a} onClick={() => setSelectedAgent(a)} />
+              ))}
+            </div>
+          </section>
+        ))}
       </div>
     </div>
   );
@@ -473,37 +530,49 @@ function ManageTab({ agents, onRefreshAgents, onReloadSuccess }: { agents: Subag
     );
   }
 
+  const groups = groupBySource(agents);
+
   return (
-    <div className="flex-1 overflow-y-auto px-5 py-4">
-      <div className="border border-gray-100 rounded-xl overflow-hidden divide-y divide-gray-50">
-        {agents.map(agent => (
-          <div key={agent.name} className="flex items-center gap-3 px-4 py-3 bg-white hover:bg-gray-50/50 transition-colors">
-            <div className="w-7 h-7 rounded-lg bg-purple-50 flex items-center justify-center flex-shrink-0">
-              <PersonaIcon className="w-3.5 h-3.5 text-purple-400" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2">
-                <span className={`text-sm font-medium ${agent.disabled ? 'text-gray-400' : 'text-gray-800'}`}>
-                  {agent.name}
-                </span>
-                <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-purple-50 text-purple-500">
-                  max {agent.maxConcurrent}
-                </span>
-              </div>
-              {agent.description && (
-                <p className={`text-xs mt-0.5 truncate ${agent.disabled ? 'text-gray-300' : 'text-gray-400'}`}>
-                  {agent.description}
-                </p>
-              )}
-            </div>
-            <Toggle
-              checked={!agent.disabled}
-              onChange={() => handleToggle(agent.name, agent.disabled)}
-              disabled={toggling === agent.name}
-            />
+    <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+      {groups.map(({ source, agents: groupAgents }) => (
+        <section key={source}>
+          <div className="flex items-center gap-2 mb-1.5">
+            <SourceBadge source={source} />
+            <span className="text-[10px] text-gray-300">
+              {groupAgents.length} agent{groupAgents.length !== 1 ? 's' : ''}
+            </span>
           </div>
-        ))}
-      </div>
+          <div className="border border-gray-100 rounded-xl overflow-hidden divide-y divide-gray-50">
+            {groupAgents.map(agent => (
+              <div key={agent.name} className="flex items-center gap-3 px-4 py-3 bg-white hover:bg-gray-50/50 transition-colors">
+                <div className="w-7 h-7 rounded-lg bg-purple-50 flex items-center justify-center flex-shrink-0">
+                  <PersonaIcon className="w-3.5 h-3.5 text-purple-400" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className={`text-sm font-medium ${agent.disabled ? 'text-gray-400' : 'text-gray-800'}`}>
+                      {agent.name}
+                    </span>
+                    <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-purple-50 text-purple-500">
+                      max {agent.maxConcurrent}
+                    </span>
+                  </div>
+                  {agent.description && (
+                    <p className={`text-xs mt-0.5 truncate ${agent.disabled ? 'text-gray-300' : 'text-gray-400'}`}>
+                      {agent.description}
+                    </p>
+                  )}
+                </div>
+                <Toggle
+                  checked={!agent.disabled}
+                  onChange={() => handleToggle(agent.name, agent.disabled)}
+                  disabled={toggling === agent.name}
+                />
+              </div>
+            ))}
+          </div>
+        </section>
+      ))}
     </div>
   );
 }
