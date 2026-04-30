@@ -33,6 +33,7 @@
 - **三层上下文管理** —— 将工作上下文、长期记忆检索与按 Agent 划分的人格分区统一为同一个一致模型。
 - **Human-in-the-Loop 权限审批** —— `PermissionBridge` 是 harness 的原生原语，同时支持高风险工具调用的显式用户授权与 Agent 主动发起的澄清请求。
 - **四层插件架构** —— MCP 工具、子 Agent、Skills、Hooks，每一层对应一个明确的工程关注点，构成一个有原则的扩展面。
+- **插件市场** —— 从任意 Git 仓库或本地目录安装第三方插件包。每个插件可以将 Skills、子 Agent、Hooks 和 MCP 服务器打包在一起。插件默认关闭，在 Web UI 中逐个开启；支持添加多个来源并设置优先级排序。
 - **DAG Teams** —— 两阶段混合编排框架：将 LLM 驱动的动态任务分解，与确定性 DAG 执行结合起来，支持持久 Agent 与虚拟 Agent 的混合编排，内置 5 个可开箱即用的虚拟 subagent。
 - **四模式定时任务** —— 纯通知 / 纯脚本 / 纯 Agent / 脚本+Agent 混合，按任务复杂度匹配执行模式，让 token 消耗与推理工作量成正比。
 - **Agentic Wiki** —— 将任务输出转化为结构化、可检索的 wiki 条目，与 Agent 记忆共同建立索引，形成一个会持续复利、能反哺未来 Agent 会话的个人知识库。
@@ -90,6 +91,7 @@ npm start
 | 文档 | 说明 |
 |---|---|
 | [快速开始与使用指南](docs/QUICK_START.md) | 安装、配置、CLI 命令、运行时布局、MCP 工具说明 |
+| [插件市场使用指南](docs/plugin-marketplace.md) | 添加插件来源，发现并启用包含 Skills / 子 Agent / Hooks / MCP 的插件包 |
 | [Hooks 使用指南](docs/hooks_guide.md) | 用 shell 脚本或 LLM 拦截 agent 生命周期事件 |
 | [远程访问指南](docs/REMOTE_ACCESS.md) | 通过反向代理（Nginx / Caddy）安全暴露 Web UI |
 | [技术报告](https://arxiv.org/abs/2604.11548) | SemaClaw: A Step Towards General-Purpose Personal AI Agents through Harness Engineering |
@@ -109,6 +111,7 @@ semaclaw/
 │   ├── memory/         # FTS5 + 向量混合搜索、每日日志
 │   ├── scheduler/      # Cron / interval / once 调度
 │   ├── wiki/           # Git 驱动的个人知识库
+│   ├── marketplace/    # 插件市场（来源管理、插件发现、MCP/Skills/子 Agent 注入）
 │   └── clawhub/        # ClaWHub 技能市场集成
 ├── web/                # React + Vite Web UI
 ├── skills/             # 内置技能

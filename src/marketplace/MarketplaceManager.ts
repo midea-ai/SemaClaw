@@ -365,7 +365,7 @@ export class MarketplaceManager {
    *   Flat:   { "serverName": { command/url/type... } }
    *   Nested: { "mcpServers": { "serverName": { ... } } }
    *
-   * Normalises `type` → `transport` and resolves ${CLAUDE_PLUGIN_ROOT}.
+   * Normalises `type` → `transport` and resolves ${CLAUDE_PLUGIN_ROOT} / ${SEMACLAW_PLUGIN_ROOT}.
    * Other ${VAR} references (e.g. ${GITHUB_TOKEN}) are left intact.
    */
   private parseDotMcpJson(data: Record<string, unknown>, pluginDir: string): MCPPluginServerDef[] {
@@ -393,19 +393,29 @@ export class MarketplaceManager {
         transport = 'stdio';
       }
 
-      // Resolve ${CLAUDE_PLUGIN_ROOT} in args (leave other ${...} vars intact)
-      const args = Array.isArray(raw.args)
-        ? (raw.args as unknown[]).map(a =>
-            typeof a === 'string' ? a.replace(/\$\{CLAUDE_PLUGIN_ROOT\}/g, pluginDir) : a
-          )
-        : undefined;
+      // Resolve ${CLAUDE_PLUGIN_ROOT} / ${SEMACLAW_PLUGIN_ROOT} in command, args, and env values (leave other ${...} vars intact)
+      const resolveRoot = (s: string) => s
+        .replace(/\$\{CLAUDE_PLUGIN_ROOT\}/g, pluginDir)
+        .replace(/\$\{SEMACLAW_PLUGIN_ROOT\}/g, pluginDir);
 
-      const { type: _type, transport: _transport, args: _args, ...rest } = raw as Record<string, unknown> & { type?: unknown; transport?: unknown; args?: unknown };
+      const command = typeof raw.command === 'string' ? resolveRoot(raw.command) : raw.command;
+      const args = Array.isArray(raw.args)
+        ? (raw.args as unknown[]).map(a => typeof a === 'string' ? resolveRoot(a) : a)
+        : undefined;
+      const env = raw.env !== null && typeof raw.env === 'object' && !Array.isArray(raw.env)
+        ? Object.fromEntries(
+            Object.entries(raw.env as Record<string, unknown>).map(([k, v]) => [k, typeof v === 'string' ? resolveRoot(v) : v])
+          )
+        : raw.env;
+
+      const { type: _type, transport: _transport, command: _command, args: _args, env: _env, ...rest } = raw as Record<string, unknown> & { type?: unknown; transport?: unknown; command?: unknown; args?: unknown; env?: unknown };
       result.push({
         ...(rest as Partial<MCPPluginServerDef>),
         name,
         transport,
+        ...(command !== undefined ? { command: command as string } : {}),
         ...(args !== undefined ? { args: args as string[] } : {}),
+        ...(env !== undefined ? { env: env as Record<string, string> } : {}),
       });
     }
     return result;

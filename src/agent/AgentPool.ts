@@ -805,6 +805,18 @@ export class AgentPool {
     this.cores.set(binding.jid, core);
     this.bindings.set(binding.jid, binding);
 
+    // Dispose probe core now that a real agent core exists — it was only needed for MCP warmup.
+    // Reset mcpWarmupStarted so the probe can re-run after all real agents later exit.
+    // Also clean up the temp probe directory it created.
+    if (this.probeCore) {
+      const probe = this.probeCore;
+      this.probeCore = undefined;
+      this.mcpWarmupStarted = false;
+      probe.dispose().catch((e: unknown) => console.warn('[AgentPool:probe] dispose failed:', e));
+      const probeDir = path.join(os.homedir(), '.semaclaw', '__mcp_probe__');
+      fs.rm(probeDir, { recursive: true, force: true }, () => {});
+    }
+
     // 应用 dispatch 开始时已存储但尚未应用的 workspace（因 agent 当时尚未创建）
     const pendingWorkspace = this.dispatchWorkspaceOverrides.get(binding.jid);
     if (pendingWorkspace) {
