@@ -23,6 +23,7 @@ import { z } from 'zod';
 import type { DispatchState, DispatchParent, DispatchTask } from '../agent/DispatchBridge';
 import { PersonaRegistry } from '../agent/PersonaRegistry';
 import { readDisabledSubagents } from '../subagents/disabled.js';
+import { getMarketplaceManager } from '../marketplace/MarketplaceManager.js';
 
 // TS2589 workaround: MCP SDK zod type instantiation
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -45,6 +46,9 @@ if (!adminFolder) {
 // 虚拟 agent 人设注册表（可选）
 const agentsConfigDir = process.env.SEMACLAW_AGENTS_CONFIG_DIR;
 const personaRegistry = agentsConfigDir ? new PersonaRegistry(agentsConfigDir) : null;
+if (personaRegistry) {
+  personaRegistry.setExtraDirs(getMarketplaceManager().getSubagentDirs());
+}
 
 /** 读取 admin agent 当前工作目录（workspace state 文件） */
 function readAdminWorkspace(): string {

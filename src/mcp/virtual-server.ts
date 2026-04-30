@@ -29,6 +29,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod';
 import { PersonaRegistry } from '../agent/PersonaRegistry';
 import { VirtualWorkerPool } from '../agent/VirtualWorkerPool';
+import { getMarketplaceManager } from '../marketplace/MarketplaceManager';
 
 // TS2589 workaround: MCP SDK zod type instantiation
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -63,8 +64,13 @@ function readCurrentWorkspace(): string {
 
 // ===== 初始化 =====
 
+const marketplaceManager = getMarketplaceManager();
+
 const registry = new PersonaRegistry(agentsConfigDir);
+registry.setExtraDirs(marketplaceManager.getSubagentDirs());
+
 const pool = new VirtualWorkerPool();
+pool.setGetMarketplaceHookFiles(() => marketplaceManager.getHookFiles());
 
 // ===== MCP Server =====
 

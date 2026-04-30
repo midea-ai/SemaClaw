@@ -491,6 +491,7 @@ export class UIServer {
         model: p.model,
         maxConcurrent: p.maxConcurrent,
         filePath: p.filePath,
+        source: p.source,
         disabled: disabled.has(p.name),
       }));
       res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ subagents: result }));

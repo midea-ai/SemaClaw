@@ -16,6 +16,7 @@ export interface PersonaConfig {
   maxConcurrent: number;        // 默认 5
   systemPrompt: string;         // frontmatter 之后的正文
   filePath: string;
+  source: string;               // 'user' | 'marketplace:<sourceName>'
 }
 
 /** systemPrompt 最大字符数，超出截断 */
@@ -78,6 +79,7 @@ export class PersonaRegistry {
     // 1. Load extra dirs first (lower priority): last in list = higher priority among extras
     for (const extra of this.extraDirs) {
       if (!fs.existsSync(extra.dir)) continue;
+      const source = extra.sourceName ? `marketplace:${extra.sourceName}` : 'user';
       try {
         for (const file of fs.readdirSync(extra.dir).filter(f => f.endsWith('.md'))) {
           const filePath = path.join(extra.dir, file);
@@ -85,6 +87,7 @@ export class PersonaRegistry {
             const persona = this.parseFile(filePath);
             if (!persona) continue;
             if (extra.skipNames?.has(persona.name)) continue;
+            persona.source = source;
             newMap.set(persona.name, persona);
           } catch { continue; }
         }
@@ -114,6 +117,7 @@ export class PersonaRegistry {
             console.warn(`[PersonaRegistry] Duplicate name "${persona.name}" in ${file}, falling back to filename "${fileBaseName}"`);
             persona.name = fileBaseName;
           }
+          persona.source = 'user';
           newMap.set(persona.name, persona);
         } catch (e) {
           console.warn(`[PersonaRegistry] Failed to parse ${file}:`, e);
@@ -194,6 +198,7 @@ export class PersonaRegistry {
       maxConcurrent,
       systemPrompt,
       filePath,
+      source: 'user',
     };
   }
 
