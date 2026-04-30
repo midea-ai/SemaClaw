@@ -1,6 +1,6 @@
 {
   "name": "semaclaw",
-  "version": "0.1.3-beta.1",
+  "version": "0.1.3-beta.2",
   "description": "Multi-group AI gateway built on sema-code-core",
   "license": "MIT",
   "author": "AIRC Sema Team",
@@ -33,7 +33,8 @@
     "cli": "tsx src/cli.ts",
     "build:web": "cd web && npm install && npm run build",
     "dev:web": "cd web && npm run dev",
-    "prepublishOnly": "npm run build && npm run build:web"
+    "prepublishOnly": "npm run build && npm run build:web",
+    "prepack": "rm -rf node_modules/@img node_modules/sharp node_modules/sema-core/node_modules/@img node_modules/sema-core/node_modules/sharp"
   },
   "dependencies": {
     "@clack/prompts": "^1.1.0",
