@@ -62,15 +62,19 @@ const FIELDS: [string, string, boolean][] = [
   ['timeout', 'Max runtime in seconds (default 10)', false],
   ['blocking', 'Block agent if hook fails (default true)', false],
   ['async', 'Fire-and-forget, no waiting (default false)', false],
+  ['include_history', 'Append conversation_history to hook payload (default false)', false],
+  ['history_limit', 'Max recent messages to include when include_history is true (optional)', false],
 ];
 
 const MINI_EXAMPLE = `{
   "hooks": {
-    "PostToolUse": [{
-      "matcher": "Bash",
+    "Stop": [{
       "hooks": [{
         "type": "command",
-        "command": "echo done"
+        "command": "save-history.sh",
+        "include_history": true,
+        "history_limit": 50,
+        "async": true
       }]
     }]
   }

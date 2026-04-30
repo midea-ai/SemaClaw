@@ -9,6 +9,8 @@ interface HookDefinition {
   timeout?: number;
   blocking?: boolean;
   async?: boolean;
+  include_history?: boolean;
+  history_limit?: number;
 }
 
 interface HookEventConfig {
