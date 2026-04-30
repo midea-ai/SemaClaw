@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { GroupInfo, ChatMessage, AgentState, WsStatus, PermissionMessage, QuestionMessage, RegisterGroupPayload, UpdateGroupPayload, DispatchParent, AgentTodosEntry } from '../types';
+import type { GroupInfo, ChatMessage, AgentState, WsStatus, PermissionMessage, QuestionMessage, RegisterGroupPayload, UpdateGroupPayload, DispatchParent, AgentTodosEntry, ImageAttachment } from '../types';
 
 interface WsConfig {
   wsPort: number;
@@ -15,7 +15,7 @@ export interface WsHook {
   agentCompacting: Record<string, boolean>;
   subscribed: Set<string>;
   subscribe: (jid: string) => void;
-  sendMessage: (jid: string, text: string) => void;
+  sendMessage: (jid: string, text: string, attachments?: ImageAttachment[]) => void;
   /** 暂停 agent（发送 agent:control pause） */
   pauseAgent: (jid: string) => void;
   /** 继续 agent，可附加可选指示（发送 agent:control resume） */
@@ -75,14 +75,18 @@ export function useWebSocket(): WsHook {
     setSubscribed(prev => new Set([...prev, jid]));
   }, [rawSend]);
 
-  const sendMessage = useCallback((jid: string, text: string) => {
+  const sendMessage = useCallback((jid: string, text: string, attachments?: ImageAttachment[]) => {
     addMessage(jid, {
-      id:        `local-${Date.now()}`,
-      role:      'user',
+      id:          `local-${Date.now()}`,
+      role:        'user',
       text,
-      timestamp: new Date().toISOString(),
+      attachments: attachments?.length ? attachments : undefined,
+      timestamp:   new Date().toISOString(),
     });
-    rawSend({ type: 'message', groupJid: jid, text });
+    const wsAttachments = attachments?.length
+      ? attachments.map(a => ({ type: 'image', url: a.dataUrl, mimeType: a.mimeType }))
+      : undefined;
+    rawSend({ type: 'message', groupJid: jid, text, ...(wsAttachments ? { attachments: wsAttachments } : {}) });
   }, [addMessage, rawSend]);
 
   // Find which jid owns a requestId — scan all message lists

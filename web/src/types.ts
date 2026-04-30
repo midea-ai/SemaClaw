@@ -30,11 +30,17 @@ export interface UpdateGroupPayload {
 
 // ===== Message types =====
 
+export interface ImageAttachment {
+  dataUrl: string;
+  mimeType: string;
+}
+
 export interface TextMessage {
   id: string;
   role: 'user' | 'agent' | 'other';
   senderName?: string;
   text: string;
+  attachments?: ImageAttachment[];
   timestamp: string;
 }
 

@@ -66,7 +66,7 @@ export function App() {
             messages={ws.messages[selectedJid!] ?? []}
             agentState={ws.agentStates[selectedJid!] ?? 'idle'}
             isCompacting={ws.agentCompacting[selectedJid!] ?? false}
-            onSend={text => ws.sendMessage(selectedJid!, text)}
+            onSend={(text, attachments) => ws.sendMessage(selectedJid!, text, attachments)}
             onPause={() => ws.pauseAgent(selectedJid!)}
             onResume={(query?: string) => ws.resumeAgent(selectedJid!, query)}
             onStop={() => ws.stopAgent(selectedJid!)}

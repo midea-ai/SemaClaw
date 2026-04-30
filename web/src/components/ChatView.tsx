@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
-import type { GroupInfo, ChatMessage, AgentState } from '../types';
+import { useEffect, useRef, useState, type KeyboardEvent, type ClipboardEvent } from 'react';
+import type { GroupInfo, ChatMessage, AgentState, ImageAttachment } from '../types';
 import { MessageBubble, TypingIndicator } from './MessageBubble';
 
 interface Props {
@@ -8,7 +8,7 @@ interface Props {
   agentState: AgentState;
   /** compact 进行中，暂停按钮禁用，显示 "Compacting…" */
   isCompacting: boolean;
-  onSend: (text: string) => void;
+  onSend: (text: string, attachments: ImageAttachment[]) => void;
   onPause: () => void;
   onResume: (query?: string) => void;
   onStop: () => void;
@@ -17,10 +17,11 @@ interface Props {
 }
 
 export function ChatView({ group, messages, agentState, isCompacting, onSend, onPause, onResume, onStop, onResolvePermission, onResolveQuestion }: Props) {
-  const [input, setInput]           = useState('');
+  const [input, setInput]                   = useState('');
+  const [pendingImages, setPendingImages]   = useState<ImageAttachment[]>([]);
   const [showStopConfirm, setShowStopConfirm] = useState(false);
-  const bottomRef                   = useRef<HTMLDivElement>(null);
-  const textareaRef                 = useRef<HTMLTextAreaElement>(null);
+  const bottomRef                           = useRef<HTMLDivElement>(null);
+  const textareaRef                         = useRef<HTMLTextAreaElement>(null);
 
   const isProcessing = agentState === 'processing';
   const isPaused     = agentState === 'paused';
@@ -48,9 +49,10 @@ export function ChatView({ group, messages, agentState, isCompacting, onSend, on
     }
     // idle：普通发送
     const text = input.trim();
-    if (!text) return;
-    onSend(text);
+    if (!text && pendingImages.length === 0) return;
+    onSend(text, pendingImages);
     setInput('');
+    setPendingImages([]);
     if (textareaRef.current) textareaRef.current.style.height = 'auto';
   };
 
@@ -58,6 +60,38 @@ export function ChatView({ group, messages, agentState, isCompacting, onSend, on
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       if (!isProcessing) handleActionButton();
+    }
+  };
+
+  const handlePaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
+    const imageItems = Array.from(e.clipboardData.items).filter(item => item.type.startsWith('image/'));
+    if (imageItems.length === 0) return;
+    for (const item of imageItems) {
+      const file = item.getAsFile();
+      if (!file) continue;
+      const srcMime = item.type;
+      // createImageBitmap with imageOrientation:'from-image' applies EXIF rotation before drawing,
+      // so the canvas output is always correctly oriented regardless of phone/camera metadata.
+      createImageBitmap(file, { imageOrientation: 'from-image' } as ImageBitmapOptions)
+        .then(bitmap => {
+          const canvas = document.createElement('canvas');
+          canvas.width  = bitmap.width;
+          canvas.height = bitmap.height;
+          canvas.getContext('2d')!.drawImage(bitmap, 0, 0);
+          bitmap.close();
+          // Keep PNG for screenshots; use JPEG for photos to reduce payload size.
+          const outMime = srcMime === 'image/png' ? 'image/png' : 'image/jpeg';
+          const dataUrl = canvas.toDataURL(outMime, outMime === 'image/jpeg' ? 0.92 : undefined);
+          setPendingImages(prev => [...prev, { dataUrl, mimeType: outMime }]);
+        })
+        .catch(() => {
+          // Fallback: no EXIF normalization, but at least something shows up.
+          const reader = new FileReader();
+          reader.onload = () => {
+            setPendingImages(prev => [...prev, { dataUrl: reader.result as string, mimeType: srcMime }]);
+          };
+          reader.readAsDataURL(file);
+        });
     }
   };
 
@@ -72,8 +106,8 @@ export function ChatView({ group, messages, agentState, isCompacting, onSend, on
 
   // ── 按钮状态计算 ──
   const actionButtonDisabled =
-    (agentState === 'idle' && !input.trim()) ||   // idle 无输入不能发送
-    (isProcessing && isCompacting);               // compacting 中暂停禁用
+    (agentState === 'idle' && !input.trim() && pendingImages.length === 0) ||  // idle 无输入且无图不能发送
+    (isProcessing && isCompacting);                                             // compacting 中暂停禁用
 
   const actionButtonTitle =
     isProcessing
@@ -146,16 +180,38 @@ export function ChatView({ group, messages, agentState, isCompacting, onSend, on
 
       {/* Input area */}
       <div className="px-6 py-4 bg-white border-t border-gray-100 flex-shrink-0">
+        {/* Pending image previews */}
+        {pendingImages.length > 0 && (
+          <div className="flex flex-wrap gap-2 mb-3">
+            {pendingImages.map((img, i) => (
+              <div key={i} className="relative group flex-shrink-0">
+                <img
+                  src={img.dataUrl}
+                  alt=""
+                  className="w-16 h-16 object-cover rounded-xl border border-gray-200 shadow-sm"
+                />
+                <button
+                  onClick={() => setPendingImages(prev => prev.filter((_, j) => j !== i))}
+                  className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-gray-600 hover:bg-gray-800 text-white text-[10px] leading-none flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                  aria-label="Remove image"
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
         <div className="flex gap-3 items-end">
           <textarea
             ref={textareaRef}
             className="flex-1 resize-none border border-gray-200 rounded-2xl px-4 py-3 text-sm text-gray-800 placeholder-gray-400 focus:outline-none focus:border-[#5BBFE8] focus:ring-2 focus:ring-[#5BBFE8]/20 transition-all min-h-[44px] max-h-32 disabled:bg-gray-50 disabled:cursor-not-allowed"
-            placeholder={isPaused ? 'Add instructions or leave empty to continue…' : 'Message…'}
+            placeholder={isPaused ? 'Add instructions or leave empty to continue…' : 'Message… (paste image with Ctrl+V / ⌘V)'}
             rows={1}
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
             onInput={handleInput}
+            onPaste={handlePaste}
             disabled={isProcessing}
           />
           {/* Action button：发送 / 暂停 / 继续 */}

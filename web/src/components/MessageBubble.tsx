@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { ChatMessage } from '../types';
+import type { ChatMessage, TextMessage } from '../types';
 import { PermissionCard, QuestionCard } from './PermissionCard';
 
 function formatTime(iso: string): string {
@@ -126,12 +126,27 @@ export function MessageBubble({ message, onResolvePermission, onResolveQuestion 
   const { role, text, timestamp, senderName } = message;
 
   if (role === 'user') {
+    const attachments = (message as TextMessage).attachments;
     return (
       <div className="flex justify-end">
         <div className="max-w-[72%]">
-          <div className="bg-[#5BBFE8] text-white px-4 py-2.5 rounded-2xl rounded-tr-sm text-sm leading-relaxed whitespace-pre-wrap break-words shadow-sm">
-            {text}
-          </div>
+          {attachments && attachments.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 mb-1.5 justify-end">
+              {attachments.map((a, i) => (
+                <img
+                  key={i}
+                  src={a.dataUrl}
+                  alt=""
+                  className="max-w-[200px] max-h-[150px] object-cover rounded-xl shadow-sm border border-[#5BBFE8]/20"
+                />
+              ))}
+            </div>
+          )}
+          {text && (
+            <div className="bg-[#5BBFE8] text-white px-4 py-2.5 rounded-2xl rounded-tr-sm text-sm leading-relaxed whitespace-pre-wrap break-words shadow-sm">
+              {text}
+            </div>
+          )}
           <p className="text-[11px] text-gray-400 mt-1 text-right pr-1">{formatTime(timestamp)}</p>
         </div>
       </div>
