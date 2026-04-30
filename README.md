@@ -22,6 +22,7 @@
 
 ---
 
+
 <p align="center">
   <img src="https://github.com/midea-ai/SemaClaw/releases/download/v0.1.1-preview/SemaClaw-demo.GIF" alt="SemaClaw Demo" width="720" />
 </p>
