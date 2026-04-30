@@ -90,9 +90,10 @@ export async function cmdWikiSearch(
     return;
   }
 
+  const wikiDir = getWikiDir();
   for (const r of results) {
     const tagStr = r.tags.length ? `  [${r.tags.join(', ')}]` : '';
-    console.log(`${r.path}  —  ${r.title}${tagStr}`);
+    console.log(`${path.join(wikiDir, r.path)}  —  ${r.title}${tagStr}`);
   }
 }
 
@@ -138,9 +139,10 @@ export async function cmdWikiStats(): Promise<void> {
   }
 
   if (stats.recentFiles.length > 0) {
+    const wikiDir = getWikiDir();
     console.log('最近修改：');
     for (const f of stats.recentFiles.slice(0, 5)) {
-      console.log(`  ${f.path}  —  ${f.title}`);
+      console.log(`  ${path.join(wikiDir, f.path)}  —  ${f.title}`);
     }
   }
 }
