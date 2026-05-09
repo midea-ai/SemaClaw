@@ -236,15 +236,24 @@ export function loadMergedHookConfig(
 
 /**
  * 构建 hook 环境变量
+ *
+ * SEMACLAW_BIN：当前进程的 CLI 入口路径（process.argv[1]）。
+ * Hook 脚本可用 `$SEMACLAW_BIN agent-task ...` 调用反思/总结子 Agent，
+ * 无需依赖 PATH 或猜安装位置。开发态（tsx src/cli.ts）和生产态
+ * （node dist/cli.js / npm global bin shim）都自然指向当前正在运行的 entry。
  */
 export function resolveHookEnv(
   globalConfigDir: string,
   workspaceDir?: string,
 ): Record<string, string> {
-  return {
+  const env: Record<string, string> = {
     SEMACLAW_ROOT: globalConfigDir,
     AGENT_WORKSPACE: workspaceDir || globalConfigDir,
   };
+  if (process.argv[1]) {
+    env.SEMACLAW_BIN = process.argv[1];
+  }
+  return env;
 }
 
 /**

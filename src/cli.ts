@@ -17,14 +17,20 @@ if (!subcommand || subcommand === 'start') {
     console.error('[semaclaw] Failed to start daemon:', err)
     process.exit(1)
   })
-} else if (subcommand === 'skills' || subcommand === 'clawhub' || subcommand === 'wiki' || subcommand === 'channel') {
+} else if (
+  subcommand === 'skills' ||
+  subcommand === 'clawhub' ||
+  subcommand === 'wiki' ||
+  subcommand === 'channel' ||
+  subcommand === 'agent-task'
+) {
   runCLI().catch((err: unknown) => {
     console.error(err instanceof Error ? err.message : String(err))
     process.exit(1)
   })
 } else {
   console.error(`Unknown command: ${subcommand}`)
-  console.error('Usage: semaclaw [start] | semaclaw skills <cmd> | semaclaw clawhub <cmd> | semaclaw wiki <cmd> | semaclaw channel <cmd>')
+  console.error('Usage: semaclaw [start] | semaclaw skills <cmd> | semaclaw clawhub <cmd> | semaclaw wiki <cmd> | semaclaw channel <cmd> | semaclaw agent-task <opts>')
   process.exit(1)
 }
 
@@ -399,6 +405,55 @@ async function runCLI(): Promise<void> {
     .action(async () => {
       const { cmdWikiStats } = await import('./cli/commands/wiki.js')
       await cmdWikiStats()
+    })
+
+  // ============================================================
+  // semaclaw agent-task
+  // ============================================================
+
+  program
+    .command('agent-task')
+    .description('Run a one-shot isolated agent task (used by hook scripts for reflection/summarization)')
+    .option('--prompt <text>', 'Inline prompt text (overrides --prompt-file)')
+    .option('--prompt-file <path>', 'Path to a prompt file (use "-" to read from stdin); also reads stdin when neither flag given')
+    .option('--working-dir <dir>', 'Working directory for tools (default: cwd)')
+    .option('--agent-data-dir <dir>', 'Agent data directory (CLAUDE.md / .sema/) — defaults to working-dir')
+    .option('--tools <list>', 'Comma-separated tool whitelist (default: all tools)')
+    .option('--skills-dir <dir...>', 'Extra skills directory (repeatable)')
+    .option('--output <fmt>', 'Output format: json | text | raw', 'text')
+    .option('--timeout <ms>', 'Timeout in milliseconds', (v: string) => parseInt(v, 10))
+    .option('--instance-id <id>', 'Engine instance id (default: auto-generated)')
+    .option('--system-prompt <text>', 'Override system prompt')
+    .action(async (opts: {
+      prompt?: string;
+      promptFile?: string;
+      workingDir?: string;
+      agentDataDir?: string;
+      tools?: string;
+      skillsDir?: string[];
+      output?: string;
+      timeout?: number;
+      instanceId?: string;
+      systemPrompt?: string;
+    }) => {
+      const { cmdAgentTask } = await import('./cli/commands/agent-task.js')
+      const out = (opts.output ?? 'text') as 'json' | 'text' | 'raw'
+      if (!['json', 'text', 'raw'].includes(out)) {
+        console.error(`Error: --output must be json | text | raw`)
+        process.exit(2)
+      }
+      await cmdAgentTask({
+        prompt: opts.prompt,
+        promptFile: opts.promptFile,
+        workingDir: opts.workingDir,
+        agentDataDir: opts.agentDataDir,
+        tools: opts.tools,
+        skillsDir: opts.skillsDir,
+        output: out,
+        timeout: opts.timeout,
+        instanceId: opts.instanceId,
+        systemPrompt: opts.systemPrompt,
+      })
     })
 
   await program.parseAsync(process.argv)

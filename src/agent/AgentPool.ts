@@ -38,6 +38,7 @@ import { getSkillsReloadSignalPath } from '../clawhub/signal.js';
 import { buildPromptForGroup } from './SessionBridge';
 import { setLastAgentTimestamp } from '../db/db';
 import { loadAndResolveHookConfig } from '../hooks/HookConfigLoader';
+import { runOneShot } from './IsolatedRunner';
 
 /** Agent 响应回调：由 MessageRouter 提供，发送消息回频道 */
 export type SendReply = (
@@ -1026,61 +1027,36 @@ export class AgentPool {
       ...expandSkillsDir(path.join(workingDir, 'skills'), 'workspace', _disabled),
     ];
 
-    const core = new SemaCore({
+    const result = await runOneShot({
       instanceId: `isolated-${task.id}`,
+      prompt: effectivePrompt,
       agentDataDir,
       workingDir,
       agentMode: 'Agent',
       useTools: group.allowedTools ?? null,
-      logLevel: 'warn',
       skillsExtraDirs,
-      skipFileEditPermission: true,
-      skipBashExecPermission: true,
-      skipSkillPermission: true,
-      skipMCPToolPermission: true,
-    });
-
-    await core.addOrUpdateMCPServer(
-      scheduleMCPConfig({
-        dbPath: config.paths.dbPath,
-        groupFolder: group.folder,
-        chatJid: group.jid,
-      }),
-      'project'
-    );
-
-    await core.createSession(`task-${task.id}`);
-
-    return new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        cleanup();
-        reject(new Error(`[AgentPool] Isolated task ${task.id} timed out`));
-      }, AGENT_TIMEOUT_MS);
-
-      const cleanup = () => {
-        clearTimeout(timer);
-        core.off('state:update', onStateUpdate);
-        core.off('message:complete', onMessageComplete);
-        (core as any).dispose?.().catch(() => {});
-      };
-
-      const onMessageComplete = (data: MessageCompleteData) => {
-        if (data.agentId !== MAIN_AGENT_ID || !data.content.trim()) return;
-        this.broadcastReply(group.jid, data.content, group.botToken ?? undefined);
-      };
-
-      const onStateUpdate = (data: StateUpdateData) => {
-        this.agentEventSink?.notifyAgentState(group.jid, data.state);
-        if (data.state === 'idle') {
-          cleanup();
-          resolve();
+      timeoutMs: AGENT_TIMEOUT_MS,
+      mcpConfigs: [{
+        config: scheduleMCPConfig({
+          dbPath: config.paths.dbPath,
+          groupFolder: group.folder,
+          chatJid: group.jid,
+        }),
+        scope: 'project',
+      }],
+      onMessage: (data) => {
+        if (data.content.trim()) {
+          this.broadcastReply(group.jid, data.content, group.botToken ?? undefined);
         }
-      };
-
-      core.on<MessageCompleteData>('message:complete', onMessageComplete);
-      core.on<StateUpdateData>('state:update', onStateUpdate);
-      core.processUserInput(effectivePrompt);
+      },
+      onState: (data) => {
+        this.agentEventSink?.notifyAgentState(group.jid, data.state);
+      },
     });
+
+    if (result.timedOut) {
+      throw new Error(`[AgentPool] Isolated task ${task.id} timed out after ${AGENT_TIMEOUT_MS}ms`);
+    }
   }
 
   // ===== 交互控制：暂停 / 继续 / 终止 =====
