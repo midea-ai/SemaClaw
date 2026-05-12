@@ -9,6 +9,21 @@
  *   semaclaw clawhub <subcommand>
  */
 
+// ===== model.conf 隔离 =====
+// 必须在任何 sema-core 模块加载前执行，让所有 CLI 子命令（agent-task / wiki / channel ...）
+// 与 daemon 共享同一份 ~/.semaclaw/semaclaw-model.conf。否则子命令走 sema-core 默认的
+// ~/.sema/model.conf，跟 web UI 的模型切换完全脱节。
+{
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const path = require('path') as typeof import('path');
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const os = require('os') as typeof import('os');
+  const semaclawModelConf = path.join(os.homedir(), '.semaclaw', 'semaclaw-model.conf');
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { setModelConfigPathOverride } = require('sema-core') as { setModelConfigPathOverride: (p: string) => void };
+  setModelConfigPathOverride(semaclawModelConf);
+}
+
 const subcommand = process.argv[2]
 
 if (!subcommand || subcommand === 'start') {
