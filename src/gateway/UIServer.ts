@@ -13,7 +13,7 @@ import * as os from 'os';
 import type { AgentPool } from '../agent/AgentPool';
 import { saveAdminPermissionsConfig, loadLLMConfigs, saveLLMConfig, updateLLMConfig, removeLLMConfig, setActiveLLMConfig, setActiveQuickLLMConfig, saveThinkingEnabled, type LLMConfig } from './GroupManager';
 import { syncLLMConfigToCore } from './llmModelSync';
-import { getModelManager } from 'sema-core';
+import { getModelManager, fetchModels as coreFetchModels, testApiConnection as coreTestApiConnection } from 'sema-core';
 import type { WikiManager } from '../wiki/WikiManager';
 import { readDisabledSkills, disableSkill, enableSkill } from '../skills/disabled.js';
 import { loadAllLocalSkills } from '../skills/scan.js';
@@ -125,7 +125,24 @@ export class UIServer {
   }
 
   /** Fetch available models from an LLM provider */
-  private async fetchModels(baseURL: string, apiKey: string, adapt: string): Promise<string[]> {
+  private async fetchModels(baseURL: string, apiKey: string, adapt: string, provider?: string): Promise<string[]> {
+    // 优先走 sema-core 的 fetchModels（带 provider 自定义路由，例如 xiaomi-mimo
+    // 永远去 /v1/models 取列表，不管 adapter 是 openai 还是 anthropic）
+    if (provider) {
+      const r = await coreFetchModels({
+        provider,
+        baseURL,
+        apiKey,
+        adapt: adapt as 'openai' | 'anthropic',
+      });
+      if (r.success && r.models) {
+        return r.models.map(m => m.id).filter(Boolean);
+      }
+      if (r.success === false && r.message) {
+        throw new Error(r.message);
+      }
+    }
+
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     let modelsUrl: string;
 
@@ -153,9 +170,31 @@ export class UIServer {
     return list.map(m => m.id).filter(Boolean);
   }
 
-  /** Test connection by attempting to list models */
-  private async testConnection(baseURL: string, apiKey: string, adapt: string): Promise<void> {
-    await this.fetchModels(baseURL, apiKey, adapt);
+  /**
+   * Test connection by issuing a real inference request (≤200 tokens).
+   * Falls back to model-list fetch when no model name is supplied (legacy callers).
+   */
+  private async testConnection(
+    baseURL: string,
+    apiKey: string,
+    adapt: string,
+    provider?: string,
+    modelName?: string,
+  ): Promise<void> {
+    if (modelName) {
+      const r = await coreTestApiConnection({
+        provider: provider ?? 'custom-openai',
+        baseURL,
+        apiKey,
+        modelName,
+        adapt: adapt as 'openai' | 'anthropic',
+      });
+      if (!r.success) {
+        throw new Error(r.message);
+      }
+      return;
+    }
+    await this.fetchModels(baseURL, apiKey, adapt, provider);
   }
 
   private async handle(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
@@ -280,9 +319,11 @@ export class UIServer {
     if (urlPath === '/api/llm-config/test') {
       if (req.method === 'POST') {
         const body = await this.readBody(req);
-        const { baseURL, apiKey, adapt } = JSON.parse(body) as { baseURL: string; apiKey: string; adapt: string };
+        const { baseURL, apiKey, adapt, provider, modelName } = JSON.parse(body) as {
+          baseURL: string; apiKey: string; adapt: string; provider?: string; modelName?: string;
+        };
         try {
-          await this.testConnection(baseURL, apiKey, adapt);
+          await this.testConnection(baseURL, apiKey, adapt, provider, modelName);
           res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ success: true, message: '连接成功' }));
         } catch (e: unknown) {
           res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ success: false, message: String((e as Error).message ?? e) }));
@@ -294,9 +335,11 @@ export class UIServer {
     if (urlPath === '/api/llm-config/models') {
       if (req.method === 'POST') {
         const body = await this.readBody(req);
-        const { baseURL, apiKey, adapt } = JSON.parse(body) as { baseURL: string; apiKey: string; adapt: string };
+        const { baseURL, apiKey, adapt, provider } = JSON.parse(body) as {
+          baseURL: string; apiKey: string; adapt: string; provider?: string;
+        };
         try {
-          const models = await this.fetchModels(baseURL, apiKey, adapt);
+          const models = await this.fetchModels(baseURL, apiKey, adapt, provider);
           res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ success: true, models }));
         } catch (e: unknown) {
           res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ success: false, message: String((e as Error).message ?? e) }));

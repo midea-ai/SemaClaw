@@ -237,10 +237,12 @@ export function loadMergedHookConfig(
 /**
  * 构建 hook 环境变量
  *
- * SEMACLAW_BIN：当前进程的 CLI 入口路径（process.argv[1]）。
- * Hook 脚本可用 `$SEMACLAW_BIN agent-task ...` 调用反思/总结子 Agent，
- * 无需依赖 PATH 或猜安装位置。开发态（tsx src/cli.ts）和生产态
- * （node dist/cli.js / npm global bin shim）都自然指向当前正在运行的 entry。
+ * SEMACLAW_BIN：始终指向 CLI 入口（cli.ts / cli.js），用于 hook 脚本
+ * `$SEMACLAW_BIN agent-task ...` 调用反思/总结子 Agent。
+ *
+ * 注意：daemon 可能由 `tsx src/index.ts`（dev 脚本）启动，此时 argv[1]
+ * 是 daemon 入口 index.ts，直接当 SEMACLAW_BIN 会让子进程再次 bootstrap
+ * daemon、撞端口。必须重定向到同目录的 cli.{ts,js}。
  */
 export function resolveHookEnv(
   globalConfigDir: string,
@@ -250,10 +252,29 @@ export function resolveHookEnv(
     SEMACLAW_ROOT: globalConfigDir,
     AGENT_WORKSPACE: workspaceDir || globalConfigDir,
   };
-  if (process.argv[1]) {
-    env.SEMACLAW_BIN = process.argv[1];
+  const bin = resolveCliEntry(process.argv[1]);
+  if (bin) {
+    env.SEMACLAW_BIN = bin;
   }
   return env;
+}
+
+/**
+ * 把 daemon 入口（index.ts/js）映射到 CLI 入口（cli.ts/js）。
+ * - 已经是 cli.* → 原样返回
+ * - 是 index.* → 替换为同目录 cli.*（仅当存在时）
+ * - 其它（npm shim 等） → 原样返回
+ */
+function resolveCliEntry(entry: string | undefined): string | undefined {
+  if (!entry) return undefined;
+  const base = path.basename(entry);
+  if (base === 'cli.ts' || base === 'cli.js') return entry;
+  if (base === 'index.ts' || base === 'index.js') {
+    const ext = base.endsWith('.ts') ? '.ts' : '.js';
+    const candidate = path.join(path.dirname(entry), `cli${ext}`);
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return entry;
 }
 
 /**

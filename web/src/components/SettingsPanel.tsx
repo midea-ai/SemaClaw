@@ -38,6 +38,8 @@ const VISION_PATTERNS: RegExp[] = [
   /moonshot-v1-.*-vision/i,
   /kimi.*vision/i,
   /kimi-latest/i,
+  // 小米 MiMo：v2.5 支持视觉，v2.5-pro 不支持（命名反直觉，用 negative lookahead 精确匹配）
+  /^mimo-v2\.5(?!-pro)/i,
   /glm-4v/i,
   /glm-4\.\d+v/i,
   /deepseek-vl/i,
@@ -83,9 +85,12 @@ const PROVIDERS: Record<string, ProviderDef> = {
   glm:        { name: 'GLM (智谱)',          baseURL: 'https://open.bigmodel.cn/api/paas/v4',              defaultAdapt: 'openai',    apiKeyPlaceholder: '输入您的智谱 API Key' },
   openrouter: { name: 'OpenRouter',         baseURL: 'https://openrouter.ai/api',          modelsUrl: 'https://openrouter.ai/api/v1',       defaultAdapt: 'openai', apiKeyPlaceholder: '输入您的 OpenRouter API Key' },
   qwen:       { name: 'Qwen (Alibaba)',      baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1', defaultAdapt: 'openai',   apiKeyPlaceholder: '输入您的阿里云 API Key' },
+  // 小米 MiMo: 模型列表只挂在 /v1，但推理可走 /v1（OpenAI 协议）或 /anthropic（Anthropic 协议）；
+  // baseURL 存 /v1，core 的 providerEndpoint('xiaomi-mimo') 会根据 adapter 自动重写到 /anthropic。
+  'xiaomi-mimo': { name: 'Xiaomi MiMo', baseURL: 'https://api.xiaomimimo.com/v1', defaultAdapt: 'anthropic', apiKeyPlaceholder: '输入您的 MiMo API Key', defaultMaxTokens: 64000, defaultContextLength: 512000 },
   custom:     { name: '自定义 LLM 接口',    baseURL: '',                                                   defaultAdapt: 'openai',    baseURLPlaceholder: 'https://your-api.com/v1', apiKeyPlaceholder: '输入您的 API Key' },
 };
-const PROVIDER_ORDER = ['anthropic','openai','kimi','minimax','deepseek','glm','openrouter','qwen','custom'];
+const PROVIDER_ORDER = ['anthropic','openai','kimi','minimax','deepseek','glm','openrouter','qwen','xiaomi-mimo','custom'];
 const DEFAULT_MAX_TOKENS_OPTIONS = [4096, 8192, 16000, 32000, 64000, 100000];
 const DEFAULT_CONTEXT_LENGTH_OPTIONS = [8000, 16000, 32000, 64000, 128000, 200000, 256000, 512000, 1000000];
 
@@ -125,6 +130,11 @@ const MODEL_LIMITS_TABLE: Array<[string, { maxTokens: number; contextLength: num
   // MiniMax
   ['minimax-m1',          { maxTokens: 40960,   contextLength: 1000000 }],
   ['abab6.5',             { maxTokens: 8192,    contextLength: 245760  }],
+  // 小米 MiMo（顺序：更具体的 -pro 在前；mimo-v2.5 默认带 vision，mimo-v2.5-pro 不带）
+  ['mimo-v2.5-pro',       { maxTokens: 64000,   contextLength: 512000  }],
+  ['mimo-v2.5',           { maxTokens: 64000,   contextLength: 512000  }],
+  ['mimo-v2-pro',         { maxTokens: 100000,  contextLength: 256000  }],
+  ['mimo-v2',             { maxTokens: 100000,  contextLength: 256000  }],
   // GLM / 智谱
   ['glm-4-long',          { maxTokens: 8192,    contextLength: 1000000 }],
   ['glm-4-flash',         { maxTokens: 8192,    contextLength: 128000  }],
@@ -955,7 +965,7 @@ function AddModelPanel({ onClose, onSaved }: AddModelPanelProps) {
       const r = await fetch('/api/llm-config/models', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ baseURL: fetchBaseURL, apiKey, adapt }),
+        body: JSON.stringify({ baseURL: fetchBaseURL, apiKey, adapt, provider }),
       });
       const data = await r.json() as { success: boolean; models?: string[]; message?: string };
       if (data.success && data.models?.length) {
@@ -976,13 +986,15 @@ function AddModelPanel({ onClose, onSaved }: AddModelPanelProps) {
   const handleTest = async () => {
     if (!baseURL || !apiKey) { setTestStatus({ msg: '请填写模型地址和 API Key', type: 'err' }); return; }
     setTestStatus({ msg: '正在测试连接…', type: 'loading' });
-    // Use provider-specific models URL for connection test (avoids auth mismatch on models endpoint)
-    const testBaseURL = PROVIDERS[provider]?.modelsUrl ?? baseURL;
+    // 当用户已经选/填了模型，发真推理测试（≤200 tokens），否则降级为列模型
+    // 注意：真推理测试要走 baseURL（不是 modelsUrl），让 core 按 provider+adapter 路由到正确端点
+    const useRealInference = Boolean(currentModel);
+    const testBaseURL = useRealInference ? baseURL : (PROVIDERS[provider]?.modelsUrl ?? baseURL);
     try {
       const r = await fetch('/api/llm-config/test', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ baseURL: testBaseURL, apiKey, adapt }),
+        body: JSON.stringify({ baseURL: testBaseURL, apiKey, adapt, provider, modelName: useRealInference ? currentModel : undefined }),
       });
       const data = await r.json() as { success: boolean; message?: string };
       setConnTested(true); setConnOk(data.success);
