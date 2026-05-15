@@ -16,7 +16,7 @@ export function App() {
   /** 用户手动收起后，本次 workbenchLatest 不再触发抢前台 */
   const [suppressedLatestAt, setSuppressedLatestAt] = useState<number | null>(null);
   const ws = useWebSocket();
-  const { dispatchParents, agentTodos, subscribeAll, workbench, workbenchLatest, workbenchReadFile, workbenchClose, workbenchMarkViewed } = ws;
+  const { dispatchParents, agentTodos, subscribeAll, workbench, workbenchLatest, workbenchReadFile, workbenchClose, workbenchMarkViewed, workbenchSetCurrent } = ws;
 
   // When dispatch is active, subscribe to all agents to receive their permission/todo events
   useEffect(() => {
@@ -70,13 +70,10 @@ export function App() {
 
   const wbSelect = useCallback((artifactId: string) => {
     if (!selectedJid) return;
-    // 把历史里的 artifact 提到 current（仅前端状态，后端不需要变）
-    // 由 useWebSocket 维护 workbench 字段：这里没有专门的 setter，
-    // 简化：用 markViewed 触发即可——current 不变但日志最新。
-    // 真要切换 current，需要从 hook 暴露 setCurrent。这里 v1 让历史只读，
-    // 切换由 LLM 再次调用 LaunchUI 触发（与 v1 替换语义一致）。
-    wbMarkViewed(artifactId);
-  }, [selectedJid, wbMarkViewed]);
+    // 把 history 里的 artifact 提到 current（纯前端切换，后端不需要变）。
+    // markViewed 由 Workbench 内部 useEffect 在 current.id 变化时自动调，这里不重复发。
+    workbenchSetCurrent(selectedJid, artifactId);
+  }, [selectedJid, workbenchSetCurrent]);
 
   // ExpandedDock 互斥控制
   const setAgentExpanded = useCallback(() => setExpandedDock('agent'), []);

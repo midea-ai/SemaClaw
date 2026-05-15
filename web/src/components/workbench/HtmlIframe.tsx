@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 interface Props {
   /** HTML 文件内容（已通过 WS 后端代读拿到） */
@@ -9,14 +9,38 @@ interface Props {
   error?: string;
 }
 
+/**
+ * Inject `<base target="_blank">` into the document so that <a href> clicks
+ * open in a new tab/window instead of navigating the iframe itself (which,
+ * under the same origin as semaclaw's webui, would load the webui inside
+ * the iframe → nested chat UI).
+ *
+ * If a <head> exists, prepend the <base> there; otherwise wrap the doc in
+ * a minimal <html><head>...<base>...</head><body>{doc}</body></html>.
+ */
+function withBaseTarget(html: string): string {
+  // Only skip if the doc already declares a <base ... target=...> — a bare
+  // `<base href="...">` doesn't change link-target behavior, so we still inject.
+  if (/<base\b[^>]*\btarget\s*=/i.test(html)) return html;
+  const baseTag = '<base target="_blank">';
+  if (/<head\b[^>]*>/i.test(html)) {
+    return html.replace(/<head\b[^>]*>/i, (m) => `${m}${baseTag}`);
+  }
+  if (/<html\b[^>]*>/i.test(html)) {
+    return html.replace(/<html\b[^>]*>/i, (m) => `${m}<head>${baseTag}</head>`);
+  }
+  return `<!doctype html><html><head>${baseTag}</head><body>${html}</body></html>`;
+}
+
 export function HtmlIframe({ srcdoc, sourcePath, error }: Props) {
-  const [delayed, setDelayed] = useState<string | undefined>(srcdoc);
+  const prepared = useMemo(() => (srcdoc == null ? undefined : withBaseTarget(srcdoc)), [srcdoc]);
+  const [delayed, setDelayed] = useState<string | undefined>(prepared);
   // 切换 artifact 时短暂卸载 iframe，避免 srcdoc 残留
   useEffect(() => {
     setDelayed(undefined);
-    const t = setTimeout(() => setDelayed(srcdoc), 0);
+    const t = setTimeout(() => setDelayed(prepared), 0);
     return () => clearTimeout(t);
-  }, [srcdoc]);
+  }, [prepared]);
 
   if (error) {
     return (
@@ -36,7 +60,7 @@ export function HtmlIframe({ srcdoc, sourcePath, error }: Props) {
     <iframe
       title={sourcePath ?? 'workbench-html'}
       srcDoc={delayed}
-      sandbox="allow-scripts"
+      sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox"
       className="w-full h-full border-0 bg-white"
     />
   );

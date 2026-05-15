@@ -45,6 +45,8 @@ export interface WsHook {
   workbenchReadFile: (jid: string, artifactId: string, path: string) => Promise<{ content?: string; error?: string }>;
   /** 取 service 类工作台的日志末尾 N 行 */
   workbenchFetchLogs: (jid: string, artifactId: string, tailLines?: number) => Promise<string>;
+  /** 把 history 里的 artifact 提到 current（纯前端状态切换） */
+  workbenchSetCurrent: (jid: string, artifactId: string) => void;
 }
 
 export function useWebSocket(): WsHook {
@@ -236,6 +238,21 @@ export function useWebSocket(): WsHook {
       }, 10000);
     });
   }, [rawSend]);
+
+  const workbenchSetCurrent = useCallback((jid: string, artifactId: string) => {
+    setWorkbench(prev => {
+      const cur = prev[jid];
+      if (!cur) return prev;
+      if (cur.current?.id === artifactId) return prev;
+      const target = cur.history.find(a => a.id === artifactId);
+      if (!target) return prev;
+      // 把 target 提到 current；原 current 放回 history 顶部
+      const newHistory = cur.current
+        ? [cur.current, ...cur.history.filter(a => a.id !== artifactId)]
+        : cur.history.filter(a => a.id !== artifactId);
+      return { ...prev, [jid]: { current: target, history: newHistory } };
+    });
+  }, []);
 
   const workbenchFetchLogs = useCallback((jid: string, artifactId: string, tailLines: number = 200): Promise<string> => {
     return new Promise((resolve) => {
@@ -551,5 +568,6 @@ export function useWebSocket(): WsHook {
     registerGroup, registerFeishuApp, registerQQApp, unregisterGroup, updateGroup,
     dispatchParents, agentTodos, subscribeAll,
     workbench, workbenchLatest, workbenchMarkViewed, workbenchClose, workbenchReadFile, workbenchFetchLogs,
+    workbenchSetCurrent,
   };
 }

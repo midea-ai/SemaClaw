@@ -22,7 +22,7 @@ export function MarkdownView({ content, error, sourcePath }: Props) {
     return <div className="p-4 text-xs text-gray-400">Loading…</div>;
   }
   return (
-    <div className="p-4 overflow-auto prose prose-sm max-w-none prose-headings:font-semibold prose-pre:bg-gray-900 prose-pre:text-gray-100">
+    <div className="h-full overflow-auto p-4 prose prose-sm max-w-none prose-headings:font-semibold prose-pre:bg-gray-900 prose-pre:text-gray-100">
       <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
         {content}
       </ReactMarkdown>
