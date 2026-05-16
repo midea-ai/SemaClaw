@@ -56,6 +56,8 @@ semaclaw
 
 That's it. Open the Web UI at **<http://127.0.0.1:18788/>**.
 
+> **Install failed?** See [docs/INSTALL_TROUBLESHOOTING.md](docs/INSTALL_TROUBLESHOOTING.md) — covers the macOS `sharp` postinstall failure and other reported issues.
+
 > **Configure an LLM on first launch.** SemaClaw starts without a built-in model. Open the Web UI → **Settings → LLM**, add a provider profile (OpenAI / Anthropic / DeepSeek / Qwen / …) with `baseURL`, `apiKey`, `modelName`. The profile is persisted to `~/.semaclaw/config.json` and synced to `~/.semaclaw/semaclaw-model.conf` — until at least one active profile exists, agent runs that call an LLM will fail.
 
 To enable messaging channels (Telegram / Feishu / QQ / WeChat), create a `.env` file in your working directory before starting `semaclaw`. See [docs/QUICK_START.md](docs/QUICK_START.md) for the full list of environment variables.
