@@ -38,7 +38,18 @@
 - **DAG Teams** — A two-stage hybrid orchestration framework combining LLM-based dynamic task decomposition with deterministic DAG execution. Supports mixed teams of persistent and virtual agents, with 5 built-in virtual subagents ready to use out of the box.
 - **Four-mode scheduled tasks** — Pure notification, pure script, pure agent, and hybrid script-plus-agent execution — matching mode to task complexity so token consumption stays proportional to reasoning work.
 - **Agentic Wiki** — Transforms task outputs into structured, retrievable wiki entries indexed alongside agent memory, creating a compounding personal knowledge base that feeds back into future agent sessions.
+- **Workbench: HTML-as-throwaway-UI** — A built-in rendering surface for agent-emitted deliverables. The `LaunchUI` tool lets agents ship interactive HTML, rich Markdown, embedded web services (iframe), or API-endpoint cards — the Web UI workbench mounts each artifact as a switchable history tab, no separate build step. Lean into "HTML as a disposable UI": ask an agent to *show you* a result instead of just describing it.
 - **Multi-channel & Web UI** — Telegram, Feishu (Lark), and QQ adapters out of the box, plus a WebSocket gateway and a React-based Web UI.
+
+---
+
+## Featured plugin pack — Overture
+
+[**Overture**](https://github.com/NingyanZhu/Overture) is a music-themed companion plugin pack that turns SemaClaw into a self-improving personal agent system. Install via **Plugin Marketplace → Add Source** by pasting the repo URL.
+
+- **`notation`** — Data-flywheel hooks that capture every tool call, user correction, and outcome into structured logs. The signal feed for the two evolution loops below.
+- **`cadence` & `repertoire`** — Two-layer self-evolution. `cadence` evolves the agent's *baseline genome* (prompts, policies, default heuristics) ; `repertoire` evolves the *skill library* — adding, refining, or retiring individual skills.
+- **`timbre`** — Persona plugin packs. Each timbre bundles tone / values / expertise into a reusable character profile that any agent can wear, decoupling *who* the agent is from *what* it knows.
 
 ---
 

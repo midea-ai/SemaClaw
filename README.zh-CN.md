@@ -37,7 +37,18 @@
 - **DAG Teams** —— 两阶段混合编排框架：将 LLM 驱动的动态任务分解，与确定性 DAG 执行结合起来，支持持久 Agent 与虚拟 Agent 的混合编排，内置 5 个可开箱即用的虚拟 subagent。
 - **四模式定时任务** —— 纯通知 / 纯脚本 / 纯 Agent / 脚本+Agent 混合，按任务复杂度匹配执行模式，让 token 消耗与推理工作量成正比。
 - **Agentic Wiki** —— 将任务输出转化为结构化、可检索的 wiki 条目，与 Agent 记忆共同建立索引，形成一个会持续复利、能反哺未来 Agent 会话的个人知识库。
+- **Workbench：HTML as throwaway UI** —— 内置的 Agent 交付物渲染面板。`LaunchUI` 工具让 Agent 直接抛出交互式 HTML、富 Markdown、内嵌的 Web 服务（iframe）或 API 端点卡片 —— Web UI 工作台把每个 artifact 挂成可切换的历史 tab，免单独构建步骤。把"HTML 当一次性 UI"用起来：让 Agent **把结果展示给你**，而不只是描述给你听。
 - **多频道与 Web UI** —— 内置 Telegram、飞书、QQ 适配器，配套 WebSocket Gateway 与 React Web UI。
+
+---
+
+## 推荐插件包 —— Overture
+
+[**Overture**](https://github.com/NingyanZhu/Overture) 是一个示例插件市场，把 SemaClaw 进一步组装成可自我进化的个人 Agent 系统。从 **插件市场 → 添加源** 粘贴仓库 URL 即可安装。
+
+- **`notation`（记谱法）** —— 数据飞轮 hook。把每次工具调用、用户与结果落成结构化日志，作为下面两条自进化循环的信号源。
+- **`cadence`（基因） & `repertoire`（剧目库）** —— 两层自进化。`cadence` 演化 Agent 的*基线基因*（提示词、策略、默认启发式）；`repertoire` 演化*技能库* —— 增删、打磨、退役单个 skill。
+- **`timbre`（音色）** —— 人设插件包。每个 timbre 语气 / 价值取向 / 专业领域打包成一个可复用的人格档案，让任何 Agent 都能"换装"。把"Agent 是谁"和"Agent 会什么"解耦。
 
 ---
 
