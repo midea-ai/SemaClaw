@@ -3,9 +3,12 @@ import type { ChatMessage, TextMessage } from '../types';
 import { PermissionCard, QuestionCard } from './PermissionCard';
 
 function formatTime(iso: string): string {
-  try {
-    return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  } catch { return ''; }
+  // 历史回放消息没有持久化时间戳（timestamp 为 ''），new Date('') 不抛异常而是
+  // 产生 Invalid Date，toLocaleTimeString 会渲染出 "Invalid Date" 字符串，需显式拦截。
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
 function CopyIcon() {

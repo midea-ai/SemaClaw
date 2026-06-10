@@ -409,14 +409,19 @@ export class WebSocketGateway {
    * 仅当 AgentPool 能定位到 sessionId（live core 已存在 或 有 pendingResume）才推送，
    * 否则前端继续从空白开始累积实时事件。
    */
+  private buildChatHistory(jid: string, group: GroupBinding): OutboundMsg | null {
+    const sessionId = this.agentPool.getCurrentSessionId(jid);
+    if (!sessionId) return null;
+    const workingDir = getAgentCurrentWorkingDir(group.folder);
+    const entries = loadSessionTranscript(workingDir, sessionId);
+    if (entries.length === 0) return null;
+    return { type: 'chat:history', groupJid: jid, sessionId, entries };
+  }
+
   private sendChatHistory(client: WsClient, jid: string, group: GroupBinding): void {
     try {
-      const sessionId = this.agentPool.getCurrentSessionId(jid);
-      if (!sessionId) return;
-      const workingDir = getAgentCurrentWorkingDir(group.folder);
-      const entries = loadSessionTranscript(workingDir, sessionId);
-      if (entries.length === 0) return;
-      this.send(client, { type: 'chat:history', groupJid: jid, sessionId, entries });
+      const msg = this.buildChatHistory(jid, group);
+      if (msg) this.send(client, msg);
     } catch (e) {
       console.warn(`[WsGateway] sendChatHistory failed for ${jid}: ${e}`);
     }
@@ -802,8 +807,22 @@ export class WebSocketGateway {
         // 会话管理命令（所有 agent 群组可用）：在入队前拦截。
         // MessageRouter 路径上有同样拦截覆盖 channel 入口；这里覆盖 web UI 直发路径。
         if (text) {
+          const prevSessionId = this.agentPool.getCurrentSessionId(groupJid);
           const sessionResult = await dispatchSessionCommand(text, { group, agentPool: this.agentPool });
           if (sessionResult !== null) {
+            // resume_session 切到了另一个会话（sessionId 变化且非空）时，立即向所有
+            // 订阅端广播该会话的历史回放，不必等下一条消息或刷新页面才能看到上下文。
+            // 先广播历史（会整体覆盖前端 messages），再发命令结果，让确认文本出现在历史之后。
+            // list_sessions 不改 sessionId、new_session 后为 null，均不触发。
+            const newSessionId = this.agentPool.getCurrentSessionId(groupJid);
+            if (newSessionId && newSessionId !== prevSessionId) {
+              try {
+                const hist = this.buildChatHistory(groupJid, group);
+                if (hist) this.broadcast(groupJid, hist);
+              } catch (e) {
+                console.warn(`[WsGateway] chat:history broadcast after resume failed for ${groupJid}: ${e}`);
+              }
+            }
             this.send(client, { type: 'agent:reply', groupJid, text: sessionResult });
             return;
           }
