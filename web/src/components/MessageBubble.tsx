@@ -1,4 +1,9 @@
 import { useState } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import remarkBreaks from 'remark-breaks';
+import rehypeHighlight from 'rehype-highlight';
+import 'highlight.js/styles/github.css';
 import type { ChatMessage, TextMessage } from '../types';
 import { PermissionCard, QuestionCard } from './PermissionCard';
 
@@ -68,8 +73,13 @@ function AgentBubble({ text, timestamp }: { text: string; timestamp: string }) {
 
   return (
     <div className="max-w-[72%] group">
-      <div className="bg-white text-gray-800 px-4 py-2.5 rounded-2xl rounded-tl-sm text-sm leading-relaxed whitespace-pre-wrap break-words shadow-sm border border-gray-100">
-        {text}
+      {/* 仅 agent 消息走 markdown 渲染；用户/群桥接消息保持纯文本，避免输入里的 *、# 被解析。
+          remark-breaks 让段落内单换行渲染为 <br>（代码块/表格在 AST 层不受影响）。
+          复制按钮仍复制原始 text，与渲染层无关。 */}
+      <div className="bg-white text-gray-800 px-4 py-2.5 rounded-2xl rounded-tl-sm text-sm leading-relaxed break-words shadow-sm border border-gray-100 prose prose-sm max-w-none prose-headings:font-semibold prose-headings:my-2 prose-p:my-1.5 prose-ul:my-1.5 prose-ol:my-1.5 prose-li:my-0.5 prose-table:my-2 prose-blockquote:my-2 prose-hr:my-3 prose-pre:my-2 prose-pre:bg-gray-50 prose-pre:text-gray-800 prose-pre:border prose-pre:border-gray-200 prose-code:before:content-none prose-code:after:content-none [&_:not(pre)>code]:bg-gray-100 [&_:not(pre)>code]:px-1 [&_:not(pre)>code]:py-0.5 [&_:not(pre)>code]:rounded [&_:not(pre)>code]:text-[0.85em] [&_:not(pre)>code]:font-normal">
+        <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]} rehypePlugins={[rehypeHighlight]}>
+          {text}
+        </ReactMarkdown>
       </div>
       <div className="flex items-center mt-1 gap-1">
         <p className="text-[11px] text-gray-400 ml-1 flex-1">{formatTime(timestamp)}</p>
