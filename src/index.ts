@@ -372,12 +372,24 @@ async function main(): Promise<void> {
     config.paths.dispatchStatePath,
     (jid, taskId, prompt, workspaceDir) => {
       agentPool.setDispatchWorkspace(jid, workspaceDir);
-      agentPool.setCurrentDispatchTaskId(jid, taskId);
+      let started = false;
       messageRouter.dispatchTask(jid, prompt, {
-        onStarted: () => agentPool.markDispatchExecuting(jid),
-        onCompleted: () => {
-          agentPool.notifyDispatchIfPending(jid, taskId);
-          agentPool.clearDispatchExecuting(jid);
+        onStarted: () => {
+          started = true;
+          agentPool.beginDispatchTask(jid);
+        },
+        // 队列回调结束 = 任务真正执行完毕，taskId 由闭包捕获——
+        // 这是任务完成归因的唯一事实来源，不再依赖全局 idle 事件 + jid→taskId 指针
+        // （旧机制在同 agent 串行多任务 / 任务超时场景下会把完成归因到错误的任务）
+        onCompleted: (error) => {
+          // 未真正开始执行（如 no-group 同步失败）时不动 AgentPool 的执行态，
+          // 避免误清同 jid 另一个正在执行任务的标记/回复缓存
+          const replyText = started ? agentPool.endDispatchTask(jid) : '';
+          if (error) {
+            dispatchBridge.notifyTaskError(taskId, error.message);
+          } else {
+            dispatchBridge.notifyTaskDone(taskId, replyText);
+          }
         },
       });
     },

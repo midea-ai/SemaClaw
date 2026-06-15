@@ -20,6 +20,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 import type { DispatchState, DispatchParent, DispatchTask } from '../agent/DispatchBridge';
+import { MIN_TASK_TIMEOUT_SECONDS } from '../agent/DispatchBridge.js';
 import { PersonaRegistry } from '../agent/PersonaRegistry';
 import { readDisabledSubagents } from '../subagents/disabled.js';
 import { getMarketplaceManager } from '../marketplace/MarketplaceManager.js';
@@ -242,13 +243,15 @@ tool(
       prompt:     z.string().describe('The specific task prompt for this agent'),
       dependsOn:  z.array(z.string()).optional().describe('Labels of other tasks in this parent that must reach terminal state before this task starts. Omit or pass [] for tasks with no prerequisites.'),
     })).min(1).describe('DAG of subtasks. Multiple tasks can share the same agent (e.g., same agent in sequential stages).'),
-    timeoutSeconds: z.number().optional().describe('Per-task timeout in seconds, counted from when each task actually starts processing (default: 900)'),
+    timeoutSeconds: z.number().optional().describe('Per-task timeout in seconds, counted from when each task actually starts processing (default: 900, minimum: 600 — lower values are raised to 600)'),
   },
   async ({ goal, tasks, timeoutSeconds = 900 }: {
     goal: string;
     tasks: { label?: string; agentName: string; prompt: string; dependsOn?: string[] }[];
     timeoutSeconds?: number;
   }) => {
+    // 子任务实际超时至少 10 分钟，防止 admin 设置过短导致任务被过早标记超时
+    timeoutSeconds = Math.max(timeoutSeconds, MIN_TASK_TIMEOUT_SECONDS);
     const state = readState();
     const errors: string[] = [];
 

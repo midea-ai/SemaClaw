@@ -177,32 +177,30 @@ export class MessageRouter {
 
   /**
    * DispatchBridge 调用：将 prompt 直接发给目标 agent（不经过 channel/trigger 检查）。
-   * onStarted/onCompleted 用于标记 dispatch task 的实际执行生命周期，
-   * 确保 notifyReply 只在真正执行 dispatch task 时触发，而非前序任务的 idle 事件。
+   * onStarted 在队列回调真正开始执行时触发（非入队时）；
+   * onCompleted(error) 在执行结束后触发，是任务完成归因的唯一事实来源——
+   * 成功时 error 为 undefined，失败（超时/会话错误/被 stop）时携带错误。
    */
-  dispatchTask(jid: string, prompt: string, callbacks?: { onStarted?: () => void; onCompleted?: () => void }): void {
+  dispatchTask(jid: string, prompt: string, callbacks?: { onStarted?: () => void; onCompleted?: (error?: Error) => void }): void {
     const group = this.groupManager.get(jid);
     if (!group) {
       console.warn(`[MessageRouter] dispatchTask: no group for ${jid}`);
+      // 直接报告失败，避免任务永久卡在 processing 直到超时
+      callbacks?.onCompleted?.(new Error(`No group bound for agent ${jid}`));
       return;
     }
     this.groupManager.touchActive(jid);
     this.groupQueue.enqueue(jid, async () => {
       callbacks?.onStarted?.();
+      let error: Error | undefined;
       try {
-        await this.runAgentWithPrompt(jid, group, prompt);
-      } finally {
-        callbacks?.onCompleted?.();
+        await this.agentPool.processAndWait(jid, group, prompt);
+      } catch (err) {
+        console.error(`[MessageRouter] dispatchTask agent error for ${jid}:`, err);
+        error = err instanceof Error ? err : new Error(String(err));
       }
+      callbacks?.onCompleted?.(error);
     });
-  }
-
-  private async runAgentWithPrompt(jid: string, group: import('../types').GroupBinding, prompt: string): Promise<void> {
-    try {
-      await this.agentPool.processAndWait(jid, group, prompt);
-    } catch (err) {
-      console.error(`[MessageRouter] dispatchTask agent error for ${jid}:`, err);
-    }
   }
 
   /**

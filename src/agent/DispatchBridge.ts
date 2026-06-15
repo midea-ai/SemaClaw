@@ -13,8 +13,11 @@
  *
  * 主进程职责：
  *   1. 轮询 registered 任务 → 检查 DAG 依赖就绪 → 注入 context → 发给目标 agent
- *   2. notifyReply(jid, text) → 标记 done，检查 parent 是否全部完成
- *   3. 超时检测，cleanup 按 parent 粒度（完成后保留 24h）
+ *   2. 队列回调结束 → notifyTaskDone/notifyTaskError（taskId 由回调闭包捕获）
+ *      → 标记 terminal，检查 parent 是否全部完成
+ *   3. 超时检测：仅把任务标记为 timeout（让 admin 的 dispatch_task 尽快返回），
+ *      不视 agent 为空闲——activeTasks 条目保留，agent 真正跑完后才解除占用并调度后续任务。
+ *      cleanup 按 parent 粒度（完成后保留 1h）
  *   4. 同一 admin 同时只允许一个 active parent，多余的排队（queued）
  *   5. parent 完成后自动激活同 admin 下一个 queued parent
  *      激活时读取 admin 当前 workspace state 文件，写入 sharedWorkspace
@@ -86,6 +89,12 @@ export interface DispatchState {
 
 const TERMINAL: TaskStatus[] = ['done', 'error', 'timeout'];
 
+/**
+ * 子任务实际超时下限（秒）。admin 在 create_parent 里设置的 timeoutSeconds
+ * 有时过短，导致任务被过早标记 timeout；此处统一兜底为至少 10 分钟。
+ */
+export const MIN_TASK_TIMEOUT_SECONDS = 600;
+
 // ===== DispatchBridge =====
 
 export class DispatchBridge {
@@ -117,7 +126,8 @@ export class DispatchBridge {
     private readonly statePath: string,
     /**
      * 由 index.ts 注入：设置子 agent 工作目录并将 augmented prompt 发给目标 agent。
-     * taskId 用于 AgentPool 在 idle 事件中精准匹配完成的任务。
+     * taskId 由队列回调闭包捕获，任务真正执行完毕时回调 notifyTaskDone/notifyTaskError——
+     * 这是任务完成归因的唯一事实来源。
      * workspaceDir 为空字符串时表示不切换（子 agent 保持自身目录）。
      */
     private readonly sendToAgent: (jid: string, taskId: string, prompt: string, workspaceDir: string) => void,
@@ -226,23 +236,28 @@ export class DispatchBridge {
   // ===== Task-centric completion notifications =====
 
   /**
-   * 将指定 taskId 的任务标记为 done（task-centric，精准匹配）。
-   * 支持持久 agent（activeTasks 有记录）和虚拟 agent（无 jid）。
+   * 任务完成统一处理（done / error 共用）：
+   * 解除 activeTasks 占用 → 写 state（TERMINAL 守卫防止覆盖已 terminal 的状态）→
+   * admin activity → 激活下一个 queued parent → 调度后续任务 → workspace 还原检查。
+   * 对已 terminal 的任务（如先被标记 timeout / cancel），状态与结果不变，
+   * 但仍会解除占用并执行还原检查——这是超时持有 slot 语义下唯一的回收点。
    */
-  notifyTaskDone(taskId: string, text: string): void {
+  private completeTask(taskId: string, status: 'done' | 'error', result: string): void {
     const jid = this.removeActiveTask(taskId); // 持久 agent 返回 jid，虚拟 agent 返回 undefined
     const now = new Date().toISOString();
     let taskAdminFolder: string | null = null;
     let completedParentAdminFolder: string | null = null;
+    let taskAgentJid: string | null = null;
     this.modifyState(state => {
       for (const parent of state.parents) {
         const task = parent.tasks.find(t => t.id === taskId);
         if (!task) continue;
-        // 防止已 cancel 的虚拟任务悬空回调覆盖 terminal 状态
+        if (!task.isVirtual && task.agentJid) taskAgentJid = task.agentJid;
+        // 防止已 cancel/timeout 的任务悬空回调覆盖 terminal 状态
         if (TERMINAL.includes(task.status)) break;
         taskAdminFolder = parent.adminFolder;
-        task.status      = 'done';
-        task.result      = text;
+        task.status      = status;
+        task.result      = result;
         task.completedAt = now;
         if (parent.tasks.every(t => TERMINAL.includes(t.status))) {
           parent.status      = 'done';
@@ -252,43 +267,30 @@ export class DispatchBridge {
         break;
       }
     });
-    console.log(`[DispatchBridge] Task ${taskId} done${jid ? ` for ${jid}` : ' (virtual)'}`);
+    if (status === 'done') {
+      console.log(`[DispatchBridge] Task ${taskId} done${jid ? ` for ${jid}` : ' (virtual)'}`);
+    } else {
+      console.warn(`[DispatchBridge] Task ${taskId} error${jid ? ` for ${jid}` : ' (virtual)'}: ${result}`);
+    }
     if (taskAdminFolder) this.onAdminActivity?.(taskAdminFolder);
     if (completedParentAdminFolder) {
       this.activateNextQueued(completedParentAdminFolder);
     }
-    this.processNextPending(jid ?? '');
-    if (jid && !this.hasActiveTasks(jid)) {
-      this.revertWorkspace(jid);
+    this.processNextPending();
+    // jid 为 undefined 时（任务已先被其他路径标记 terminal，activeTasks 无记录）
+    // 用 state 里的 agentJid 兜底，确保 agent 真正结束后 workspace/权限一定被还原
+    const revertJid = jid ?? taskAgentJid ?? undefined;
+    if (revertJid && !this.hasActiveTasks(revertJid)) {
+      this.revertWorkspace(revertJid);
     }
   }
 
   /**
-   * 兼容桥接：AgentPool idle 事件只有 jid 时的 fallback。
-   * 取该 agent 名下最早 startedAt 的活跃任务进行匹配。
-   * Phase 2 完成后可移除。
+   * 将指定 taskId 的任务标记为 done（task-centric，精准匹配）。
+   * 支持持久 agent（activeTasks 有记录）和虚拟 agent（无 jid）。
    */
-  notifyReply(jid: string, text: string): void {
-    const set = this.activeAgentTasks.get(jid);
-    if (!set || set.size === 0) return;
-    // 从 state 文件中找到该 jid 名下最早 startedAt 的 processing 任务
-    let earliestTaskId: string | null = null;
-    let earliestStartedAt: string | null = null;
-    try {
-      const state = this.readState();
-      for (const parent of state.parents) {
-        for (const task of parent.tasks) {
-          if (!set.has(task.id) || task.status !== 'processing') continue;
-          if (!earliestStartedAt || (task.startedAt && task.startedAt < earliestStartedAt)) {
-            earliestStartedAt = task.startedAt;
-            earliestTaskId = task.id;
-          }
-        }
-      }
-    } catch { /* ignore */ }
-    if (earliestTaskId) {
-      this.notifyTaskDone(earliestTaskId, text);
-    }
+  notifyTaskDone(taskId: string, text: string): void {
+    this.completeTask(taskId, 'done', text);
   }
 
   /**
@@ -296,63 +298,28 @@ export class DispatchBridge {
    * 支持持久 agent 和虚拟 agent。
    */
   notifyTaskError(taskId: string, errorMessage: string): void {
-    const jid = this.removeActiveTask(taskId);
-    const now = new Date().toISOString();
-    let taskAdminFolder: string | null = null;
-    let completedParentAdminFolder: string | null = null;
-    this.modifyState(state => {
-      for (const parent of state.parents) {
-        const task = parent.tasks.find(t => t.id === taskId);
-        if (!task) continue;
-        // 防止已 cancel 的虚拟任务悬空回调覆盖 terminal 状态
-        if (TERMINAL.includes(task.status)) break;
-        taskAdminFolder = parent.adminFolder;
-        task.status      = 'error';
-        task.result      = errorMessage;
-        task.completedAt = now;
-        if (parent.tasks.every(t => TERMINAL.includes(t.status))) {
-          parent.status      = 'done';
-          parent.completedAt = now;
-          completedParentAdminFolder = parent.adminFolder;
-        }
-        break;
-      }
-    });
-    console.warn(`[DispatchBridge] Task ${taskId} error${jid ? ` for ${jid}` : ' (virtual)'}: ${errorMessage}`);
-    if (taskAdminFolder) this.onAdminActivity?.(taskAdminFolder);
-    if (completedParentAdminFolder) {
-      this.activateNextQueued(completedParentAdminFolder);
-    }
-    this.processNextPending(jid ?? '');
-    if (jid && !this.hasActiveTasks(jid)) {
-      this.revertWorkspace(jid);
-    }
+    this.completeTask(taskId, 'error', errorMessage);
   }
 
   /**
-   * 兼容桥接：Agent 错误/超时时由 AgentPool 调用（只有 jid）。
-   * 非 dispatch 任务时无记录，直接返回。
+   * jid 级兜底：Agent 被 stop / destroy 时由 AgentPool 调用（只有 jid）。
+   * 释放该 jid 名下【所有】活跃任务条目并标记 error——不按 status 过滤：
+   * 已被标记 timeout 的任务其队列回调可能刚被 clearQueue 丢弃，
+   * 这里是它解除 activeTasks 占用的唯一机会（否则该 jid 永久无法调度新任务）。
+   * 已 terminal 的任务状态不会被覆盖（completeTask 内 TERMINAL 守卫）。
+   * 非 dispatch 调用时无记录，直接返回。
+   *
+   * 重要：清扫过程中 completeTask → processNextPending 可能同步启动同 jid 的
+   * 下一个任务（新条目不在本次迭代副本中，不会被本次清扫波及）。因此一次
+   * 拆除流程（stop / destroy）只允许调用一次 notifyError——连续两次清扫会把
+   * 第一次清扫刚调度的任务误标 error，而其队列回调仍会幽灵执行。
    */
   notifyError(jid: string, errorMessage: string): void {
     const set = this.activeAgentTasks.get(jid);
     if (!set || set.size === 0) return;
-    // 取该 jid 名下最早 startedAt 的 processing 任务
-    let earliestTaskId: string | null = null;
-    let earliestStartedAt: string | null = null;
-    try {
-      const state = this.readState();
-      for (const parent of state.parents) {
-        for (const task of parent.tasks) {
-          if (!set.has(task.id) || task.status !== 'processing') continue;
-          if (!earliestStartedAt || (task.startedAt && task.startedAt < earliestStartedAt)) {
-            earliestStartedAt = task.startedAt;
-            earliestTaskId = task.id;
-          }
-        }
-      }
-    } catch { /* ignore */ }
-    if (earliestTaskId) {
-      this.notifyTaskError(earliestTaskId, errorMessage);
+    // 先复制：completeTask 内部的 removeActiveTask 会修改原 set
+    for (const taskId of [...set]) {
+      this.notifyTaskError(taskId, errorMessage);
     }
   }
 
@@ -458,6 +425,11 @@ export class DispatchBridge {
     const now = new Date();
 
     // 超时检测（仅持久 agent 任务；虚拟任务由 VirtualWorkerPool 内部 timeout 管理）
+    // 注意：超时只把任务标记为 timeout（让 admin 的 dispatch_task 尽快拿到结果），
+    // 不把 agent 视为空闲——agent 实际仍在执行，activeTasks 条目保留，
+    // 不调度同 jid 的后续任务、不还原 workspace/权限。
+    // agent 真正跑完后，队列回调的 notifyTaskDone/notifyTaskError 会因 TERMINAL 守卫
+    // 跳过状态覆盖，但仍会解除占用、调度后续任务并执行还原。
     for (const parent of state.parents) {
       if (parent.status !== 'active') continue;
       for (const task of parent.tasks) {
@@ -475,36 +447,23 @@ export class DispatchBridge {
               }
             }
           });
-          this.removeActiveTask(task.id);
-          console.warn(`[DispatchBridge] Task ${task.id} timed out`);
+          console.warn(`[DispatchBridge] Task ${task.id} timed out (agent still busy; slot held until it actually finishes)`);
           if (completedAdminFolder) {
             this.activateNextQueued(completedAdminFolder);
-          }
-          this.processNextPending(task.agentJid);
-          if (!this.hasActiveTasks(task.agentJid)) {
-            this.revertWorkspace(task.agentJid);
           }
         }
       }
     }
 
     // 启动 registered 任务
-    try { state = this.readState(); } catch { return; }
-    for (const parent of state.parents) {
-      if (parent.status !== 'active') continue;
-      if (this.pausedAdmins.has(parent.adminFolder)) continue;
-      for (const task of parent.tasks) {
-        if (task.status === 'registered' && this.canStartTask(task, parent.tasks)) {
-          this.startTask(parent, task);
-        }
-      }
-    }
+    this.processNextPending();
   }
 
   /**
-   * 任意任务完成后，扫描所有 active parent 中被新解锁的 registered 任务并启动。
+   * 扫描所有 active parent 中依赖就绪的 registered 任务并启动。
+   * 轮询（processPending）与任务完成（completeTask）两条路径共用。
    */
-  private processNextPending(_completedJid: string): void {
+  private processNextPending(): void {
     try {
       const state = this.readState();
       for (const parent of state.parents) {
@@ -543,35 +502,6 @@ export class DispatchBridge {
    * 判断任务是否满足启动条件：所有依赖任务均已达到 terminal 状态。
    * continue 策略：error / timeout 同样视为 terminal，不阻塞后续任务。
    */
-  /** 内部辅助：将任务标记为 error 并检查 parent 完成状态 */
-  private markTaskError(taskId: string, errorMessage: string): void {
-    const now = new Date().toISOString();
-    let completedParentAdminFolder: string | null = null;
-    let taskAdminFolder: string | null = null;
-    this.modifyState(state => {
-      for (const parent of state.parents) {
-        const task = parent.tasks.find(t => t.id === taskId);
-        if (!task) continue;
-        taskAdminFolder = parent.adminFolder;
-        task.status = 'error';
-        task.result = errorMessage;
-        task.completedAt = now;
-        if (parent.tasks.every(t => TERMINAL.includes(t.status))) {
-          parent.status = 'done';
-          parent.completedAt = now;
-          completedParentAdminFolder = parent.adminFolder;
-        }
-        break;
-      }
-    });
-    console.warn(`[DispatchBridge] Task ${taskId} error: ${errorMessage}`);
-    if (taskAdminFolder) this.onAdminActivity?.(taskAdminFolder);
-    if (completedParentAdminFolder) {
-      this.activateNextQueued(completedParentAdminFolder);
-    }
-    this.processNextPending('');
-  }
-
   private isReady(task: DispatchTask, allTasks: DispatchTask[]): boolean {
     return task.dependsOn.every(depLabel => {
       const dep = allTasks.find(t => t.label === depLabel);
@@ -622,7 +552,9 @@ export class DispatchBridge {
     const augmented = `${ctx}\n\n${task.prompt}`;
 
     const startedAt = new Date().toISOString();
-    const timeoutAt = new Date(Date.now() + task.timeoutSeconds * 1000).toISOString();
+    // 实际超时至少 10 分钟，防止 admin 在 create_parent 里设得过短
+    const effectiveTimeoutSeconds = Math.max(task.timeoutSeconds, MIN_TASK_TIMEOUT_SECONDS);
+    const timeoutAt = new Date(Date.now() + effectiveTimeoutSeconds * 1000).toISOString();
     this.modifyState(state => {
       for (const p of state.parents) {
         const t = p.tasks.find(x => x.id === task.id);
@@ -636,12 +568,12 @@ export class DispatchBridge {
       // 虚拟 agent 路径：通过 VirtualWorkerPool 非阻塞执行
       const persona = this.personaRegistry?.get(task.personaName);
       if (!persona || !this.virtualWorkerPool) {
-        this.markTaskError(task.id, `Virtual agent setup error: persona "${task.personaName}" not available`);
+        this.notifyTaskError(task.id, `Virtual agent setup error: persona "${task.personaName}" not available`);
         return;
       }
       // 虚拟任务不追踪 activeTasks（无 jid），由 VirtualWorkerPool.activeCounts 管理并发
       this.virtualWorkerPool.run(persona, augmented, parent.sharedWorkspace ?? process.cwd(), {
-        timeout: task.timeoutSeconds,
+        timeout: effectiveTimeoutSeconds,
         taskId: task.id,
       })
         .then(r => this.notifyTaskDone(task.id, r.result))
@@ -653,11 +585,8 @@ export class DispatchBridge {
         this.sendToAgent(task.agentJid, task.id, augmented, parent.sharedWorkspace ?? '');
       } catch (err) {
         console.error(`[DispatchBridge] sendToAgent failed for ${task.agentJid}:`, err);
-        this.removeActiveTask(task.id);
-        this.markTaskError(task.id, `sendToAgent failed: ${err}`);
-        if (!this.hasActiveTasks(task.agentJid)) {
-          this.revertWorkspace(task.agentJid);
-        }
+        // completeTask 内部完成 removeActiveTask + 后续调度 + workspace 还原检查
+        this.notifyTaskError(task.id, `sendToAgent failed: ${err}`);
       }
     }
   }
