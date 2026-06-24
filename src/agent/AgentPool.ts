@@ -132,6 +132,9 @@ export class AgentPool {
   private runtimeWorkDirs = new Map<string, string>();
   /** jid → 取消文件监听的函数 */
   private workspaceWatchers = new Map<string, () => void>();
+  /** managed skills 目录的 fs.watch（捕获手动增删 skill 文件夹），cleanup 用 */
+  private managedSkillsWatcher?: fs.FSWatcher;
+  private managedSkillsReloadTimer?: ReturnType<typeof setTimeout>;
   private dispatchBridge: DispatchBridge | null = null;
   private groupQueue: GroupQueue | null = null;
   /** jid → dispatch task 期间的临时工作目录（完成后 revert） */
@@ -214,10 +217,47 @@ export class AgentPool {
     fs.watchFile(signalPath, { interval: 1000 }, () => {
       this.reloadAllSkills();
     });
+    // clawhub install/uninstall/refresh + UI enable/disable 会写 reload-signal，
+    // 但用户手动 cp/移动一个 skill 文件夹进 managedSkillsDir 不会写信号，
+    // 导致 sema-core 的 loadAllSkills memoize 缓存不失效、agent 看不到（UI 因每次重扫磁盘却能列出）。
+    // 直接 watch 目录本身，让手动添加的 managed skill 也能热加载。
+    this.watchManagedSkillsDir();
+  }
+
+  /**
+   * 监听 managedSkillsDir 下 skill 文件夹的手动增删（非 clawhub 安装路径）。
+   * 仅捕获直接子项（新增/删除一个 skill 文件夹即触发），debounce 后 reloadAllSkills()。
+   */
+  private watchManagedSkillsDir(): void {
+    const dir = config.paths.managedSkillsDir;
+    try {
+      fs.mkdirSync(dir, { recursive: true }); // 目录不存在则 fs.watch 会抛错
+    } catch { /* ignore */ }
+    try {
+      this.managedSkillsWatcher = fs.watch(dir, { persistent: false }, (_event, filename) => {
+        // 忽略 .clawhub 信号目录的变化（reload-signal 已由 watchFile 单独处理，避免重复 reload）
+        if (filename && filename.toString().startsWith('.clawhub')) return;
+        if (this.managedSkillsReloadTimer) clearTimeout(this.managedSkillsReloadTimer);
+        // debounce：cp 一个文件夹会触发多次事件。
+        // 取 1500ms（> reload-signal 的 watchFile 轮询间隔 1000ms）：clawhub 安装时
+        // signal 触发的权威 reload 会先到并在 reloadAllSkills() 里取消本定时器，避免重复 reload；
+        // 纯手动改动（无 signal）则在此兜底触发一次。
+        this.managedSkillsReloadTimer = setTimeout(() => this.reloadAllSkills(), 1500);
+      });
+    } catch (e) {
+      console.warn('[AgentPool] fs.watch managedSkillsDir failed, manual skill hot-reload disabled:', e);
+    }
   }
 
   /** 重新加载所有活跃 agent 的 skill 注册表（不重建 session） */
   reloadAllSkills(): void {
+    // 任何来源（clawhub 信号 / UI 直接调用 / 兜底）的 reload 都取消挂起的 dir-watch
+    // 兜底定时器：managedSkillsDir 的目录 watch 只为「未写 reload-signal 的手动改动」兜底，
+    // 一旦权威 reload 已发生就不必再重复扫描。
+    if (this.managedSkillsReloadTimer) {
+      clearTimeout(this.managedSkillsReloadTimer);
+      this.managedSkillsReloadTimer = undefined;
+    }
     invalidateDisabledSkillsCache();
     const count = this.cores.size;
     if (count === 0) {
@@ -1446,6 +1486,9 @@ export class AgentPool {
     const jids = [...this.cores.keys()];
     await Promise.all(jids.map((jid) => this.destroy(jid)));
     fs.unwatchFile(getSkillsReloadSignalPath());
+    // 先 close watcher，再清定时器：否则两步之间触发的事件会重新挂上一个不会被清的定时器
+    this.managedSkillsWatcher?.close();
+    if (this.managedSkillsReloadTimer) clearTimeout(this.managedSkillsReloadTimer);
   }
 
   // ===== Internal =====
