@@ -6,6 +6,7 @@ import rehypeHighlight from 'rehype-highlight';
 import 'highlight.js/styles/github.css';
 import type { ChatMessage, TextMessage } from '../types';
 import { PermissionCard, QuestionCard } from './PermissionCard';
+import { FormCard } from './FormCard';
 
 function formatTime(iso: string): string {
   // 历史回放消息没有持久化时间戳（timestamp 为 ''），new Date('') 不抛异常而是
@@ -117,9 +118,10 @@ interface MessageBubbleProps {
   message: ChatMessage;
   onResolvePermission: (requestId: string, optionKey: string) => void;
   onResolveQuestion: (requestId: string, answers: Record<number, number | number[]>, otherTexts?: Record<number, string>) => void;
+  onResolveForm: (requestId: string, values: Record<string, unknown>, submitted: boolean) => void;
 }
 
-export function MessageBubble({ message, onResolvePermission, onResolveQuestion }: MessageBubbleProps) {
+export function MessageBubble({ message, onResolvePermission, onResolveQuestion, onResolveForm }: MessageBubbleProps) {
   if (message.role === 'permission') {
     return (
       <div className="flex justify-start">
@@ -132,6 +134,16 @@ export function MessageBubble({ message, onResolvePermission, onResolveQuestion 
     return (
       <div className="flex justify-start">
         <QuestionCard message={message} onResolve={onResolveQuestion} />
+      </div>
+    );
+  }
+
+  if (message.role === 'form') {
+    // surface:'dock' 的表单不在聊天流渲染（由 Workbench dock 处理），此处仅渲染 inline
+    if (message.surface === 'dock') return null;
+    return (
+      <div className="flex justify-start">
+        <FormCard message={message} onResolve={onResolveForm} />
       </div>
     );
   }

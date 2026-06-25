@@ -56,6 +56,7 @@ import type { GroupQueue } from '../agent/GroupQueue';
 import type { TelegramChannel } from '../channels/telegram';
 import type { QQChannel } from '../channels/qq';
 import type { PermissionPayload, AskQuestionPayload } from '../agent/PermissionBridge';
+import type { FormPayload } from '../agent/FormBridge';
 import type {
   WorkbenchNewPayload,
   WorkbenchServiceReadyPayload,
@@ -97,6 +98,8 @@ type OutboundMsg =
   | { type: 'question:request'; groupJid: string; requestId: string } & AskQuestionPayload
   | { type: 'permission:resolved'; groupJid: string; requestId: string; optionKey: string; optionLabel: string }
   | { type: 'question:resolved'; groupJid: string; requestId: string; answers: Record<string, string> }
+  | ({ type: 'form:request'; groupJid: string; requestId: string } & FormPayload)
+  | { type: 'form:resolved'; groupJid: string; requestId: string; values: Record<string, unknown> }
   | { type: 'dispatch:update'; parents: DispatchParent[] }
   | { type: 'agent:todos'; agentJid: string; agentName: string; todos: { content: string; status: string; activeForm?: string }[] }
   | { type: 'feishu-app:registered'; appId: string }
@@ -305,6 +308,26 @@ export class WebSocketGateway {
       groupJid: chatJid,
       requestId,
       answers,
+    });
+  }
+
+  /** FormBridge 表单请求时调用 */
+  notifyFormRequest(chatJid: string, requestId: string, payload: FormPayload): void {
+    this.broadcast(chatJid, {
+      type: 'form:request',
+      groupJid: chatJid,
+      requestId,
+      ...payload,
+    });
+  }
+
+  /** FormBridge 表单提交后调用，广播给订阅该群组的所有客户端 */
+  notifyFormResolved(chatJid: string, requestId: string, values: Record<string, unknown>): void {
+    this.broadcast(chatJid, {
+      type: 'form:resolved',
+      groupJid: chatJid,
+      requestId,
+      values,
     });
   }
 
@@ -855,6 +878,19 @@ export class WebSocketGateway {
           return;
         }
         this.agentPool.resolveAskQuestionBatch(requestId, answers, otherTexts);
+        return;
+      }
+
+      case 'form:response': {
+        if (!this.requireAuth(client)) return;
+        const requestId = String(msg.requestId ?? '');
+        const values = (msg.values as Record<string, unknown>) ?? {};
+        const submitted = msg.submitted !== false; // 缺省视为提交；显式 false 为跳过
+        if (!requestId) {
+          this.send(client, { type: 'error', message: 'requestId required' });
+          return;
+        }
+        this.agentPool.resolveForm(requestId, values, submitted);
         return;
       }
 

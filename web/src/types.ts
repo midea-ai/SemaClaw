@@ -78,7 +78,56 @@ export interface QuestionMessage {
   timestamp: string;
 }
 
-export type ChatMessage = TextMessage | PermissionMessage | QuestionMessage;
+// ===== FormUI =====
+
+export interface FormFieldOption {
+  label: string;
+  value: string;
+}
+
+export interface FormTableColumn {
+  key: string;
+  label: string;
+  type?: 'text' | 'number';
+}
+
+interface FormFieldBase {
+  key: string;
+  label: string;
+  required?: boolean;
+  help?: string;
+}
+
+/** 封闭组件目录的 TS 镜像（与 sema-core events/types.ts 的 FormField 对齐） */
+export type FormFieldDef =
+  | (FormFieldBase & { type: 'text'; placeholder?: string; maxLength?: number; default?: string })
+  | (FormFieldBase & { type: 'textarea'; placeholder?: string; maxLength?: number; rows?: number; default?: string })
+  | (FormFieldBase & { type: 'number'; min?: number; max?: number; step?: number; default?: number })
+  | (FormFieldBase & { type: 'slider'; min: number; max: number; step?: number; default?: number })
+  | (FormFieldBase & { type: 'select'; options: FormFieldOption[]; default?: string })
+  | (FormFieldBase & { type: 'radio'; options: FormFieldOption[]; default?: string })
+  | (FormFieldBase & { type: 'multiselect'; options: FormFieldOption[]; default?: string[] })
+  | (FormFieldBase & { type: 'checkbox'; default?: boolean })
+  | (FormFieldBase & { type: 'date'; min?: string; max?: string; default?: string })
+  | { type: 'static_text'; text: string; variant?: 'heading' | 'body' | 'divider' }
+  | (FormFieldBase & { type: 'editable_table'; columns: FormTableColumn[]; rows?: Record<string, string | number>[]; allowAddRow?: boolean });
+
+export interface FormMessage {
+  id: string;
+  role: 'form';
+  requestId: string;
+  agentId: string;
+  title: string;
+  surface: 'inline' | 'dock';
+  submitLabel: string;
+  fields: FormFieldDef[];
+  /** 受控编辑中的当前值（挂载时按 field.default seed） */
+  values: Record<string, unknown>;
+  resolved: boolean;
+  timestamp: string;
+}
+
+export type ChatMessage = TextMessage | PermissionMessage | QuestionMessage | FormMessage;
 
 export type AgentState = 'idle' | 'processing' | string;
 

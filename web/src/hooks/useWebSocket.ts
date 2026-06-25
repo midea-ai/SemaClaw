@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { GroupInfo, ChatMessage, AgentState, WsStatus, PermissionMessage, QuestionMessage, RegisterGroupPayload, UpdateGroupPayload, DispatchParent, AgentTodosEntry, ImageAttachment, WorkbenchArtifact, WorkbenchState, WorkflowDefSummary, WorkflowRun } from '../types';
+import type { GroupInfo, ChatMessage, AgentState, WsStatus, PermissionMessage, QuestionMessage, FormMessage, RegisterGroupPayload, UpdateGroupPayload, DispatchParent, AgentTodosEntry, ImageAttachment, WorkbenchArtifact, WorkbenchState, WorkflowDefSummary, WorkflowRun } from '../types';
 
 // ===== workbench 本地持久化（防止页面刷新丢失已 launch 的 UI tab）=====
 // 仅前端持久化：daemon 仍存活时刷新页面完全恢复；daemon 重启后旧的 backend
@@ -47,6 +47,12 @@ export interface WsHook {
   stopAgent: (jid: string) => void;
   resolvePermission: (requestId: string, optionKey: string) => void;
   resolveQuestion: (requestId: string, answers: Record<number, number | number[]>, otherTexts?: Record<number, string>) => void;
+  /** 提交 FormUI 表单（submitted=false 表示跳过） */
+  resolveForm: (requestId: string, values: Record<string, unknown>, submitted: boolean) => void;
+  /** jid → 当前活跃的 dock 表单（surface:'dock'） */
+  formDock: Record<string, FormMessage | null>;
+  /** 最新到达的 dock 表单，App 用于触发抢前台展开 workbench */
+  formDockLatest: { jid: string; at: number } | null;
   registerGroup: (data: RegisterGroupPayload) => void;
   registerFeishuApp: (appId: string, appSecret: string, domain?: string) => void;
   registerQQApp: (appId: string, appSecret: string, sandbox?: boolean) => void;
@@ -98,6 +104,10 @@ export function useWebSocket(): WsHook {
   const [agentTodos, setAgentTodos]           = useState<Record<string, AgentTodosEntry>>({});
   const [workbench, setWorkbench]             = useState<Record<string, WorkbenchState>>(() => loadWorkbench());
   const [workbenchLatest, setWorkbenchLatest] = useState<{ jid: string; artifactId: string; at: number } | null>(null);
+  /** jid → 当前活跃的 dock 表单（surface:'dock'），无则 null */
+  const [formDock, setFormDock]               = useState<Record<string, FormMessage | null>>({});
+  /** 最新到达的 dock 表单（jid + 时间戳），App 用于触发抢前台展开 */
+  const [formDockLatest, setFormDockLatest]   = useState<{ jid: string; at: number } | null>(null);
   const [workflowDefs, setWorkflowDefs] = useState<WorkflowDefSummary[]>([]);
   const [workflowRuns, setWorkflowRuns] = useState<WorkflowRun[]>([]);
   const [workflowError, setWorkflowError] = useState<string | null>(null);
@@ -224,6 +234,31 @@ export function useWebSocket(): WsHook {
         }
       }
       return next;
+    });
+  }, [rawSend]);
+
+  const resolveForm = useCallback((requestId: string, values: Record<string, unknown>, submitted: boolean) => {
+    rawSend({ type: 'form:response', requestId, values, submitted });
+    // 本地锁定 inline 表单卡片为已解决
+    setMessages(prev => {
+      const next = { ...prev };
+      for (const [jid, msgs] of Object.entries(prev)) {
+        const idx = msgs.findIndex(m => m.role === 'form' && (m as FormMessage).requestId === requestId);
+        if (idx >= 0) {
+          const f = msgs[idx] as FormMessage;
+          const updated: FormMessage = { ...f, values, resolved: true };
+          next[jid] = [...msgs.slice(0, idx), updated, ...msgs.slice(idx + 1)];
+          break;
+        }
+      }
+      return next;
+    });
+    // dock 表单：提交后移除
+    setFormDock(prev => {
+      for (const [jid, fm] of Object.entries(prev)) {
+        if (fm?.requestId === requestId) return { ...prev, [jid]: null };
+      }
+      return prev;
     });
   }, [rawSend]);
 
@@ -517,6 +552,50 @@ export function useWebSocket(): WsHook {
             });
             break;
           }
+          case 'form:request': {
+            const fields = (msg.fields as FormMessage['fields']) ?? [];
+            // 按 field.default seed 受控值
+            const initial: Record<string, unknown> = {};
+            for (const f of fields) {
+              if (f.type === 'static_text') continue;
+              if ('default' in f && f.default !== undefined) initial[f.key] = f.default;
+            }
+            const fJid = msg.groupJid as string;
+            const surface = (msg.surface as FormMessage['surface']) ?? 'inline';
+            const formMsg: FormMessage = {
+              id:          `f-${msg.requestId as string}`,
+              role:        'form',
+              requestId:   msg.requestId as string,
+              agentId:     msg.agentId as string,
+              title:       (msg.title as string) ?? '',
+              surface,
+              submitLabel: (msg.submitLabel as string) ?? 'Submit',
+              fields,
+              values:      initial,
+              resolved:    false,
+              timestamp:   new Date().toISOString(),
+            };
+            if (surface === 'dock') {
+              // dock 表单不进聊天流，单独存 formDock 并触发抢前台
+              setFormDock(prev => ({ ...prev, [fJid]: formMsg }));
+              setFormDockLatest({ jid: fJid, at: Date.now() });
+            } else {
+              addMessage(fJid, formMsg);
+            }
+            break;
+          }
+          case 'form:resolved': {
+            const fJid = msg.groupJid as string;
+            const fId  = msg.requestId as string;
+            updateMessage(fJid, `f-${fId}`, (m) => {
+              const f = m as FormMessage;
+              if (f.resolved) return m; // already resolved locally
+              return { ...f, resolved: true };
+            });
+            // dock 表单：解决后从 formDock 移除
+            setFormDock(prev => (prev[fJid]?.requestId === fId ? { ...prev, [fJid]: null } : prev));
+            break;
+          }
           case 'group:registered':
             setGroups(prev => {
               const g = msg.group as GroupInfo;
@@ -693,7 +772,7 @@ export function useWebSocket(): WsHook {
 
   return {
     status, groups, messages, agentStates, agentCompacting, subscribed, subscribe, sendMessage,
-    pauseAgent, resumeAgent, stopAgent, resolvePermission, resolveQuestion,
+    pauseAgent, resumeAgent, stopAgent, resolvePermission, resolveQuestion, resolveForm, formDock, formDockLatest,
     registerGroup, registerFeishuApp, registerQQApp, unregisterGroup, updateGroup,
     dispatchParents, agentTodos, subscribeAll,
     workbench, workbenchLatest, workbenchMarkViewed, workbenchClose, workbenchReadFile, workbenchFetchLogs,

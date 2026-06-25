@@ -18,7 +18,7 @@ export function App() {
   /** 用户手动收起后，本次 workbenchLatest 不再触发抢前台 */
   const [suppressedLatestAt, setSuppressedLatestAt] = useState<number | null>(null);
   const ws = useWebSocket();
-  const { dispatchParents, agentTodos, subscribeAll, workbench, workbenchLatest, workbenchReadFile, workbenchClose, workbenchMarkViewed, workbenchSetCurrent, workflowDefs, workflowRuns, workflowError, workflowRun, workflowCancel, workflowEdit, workflowRefresh } = ws;
+  const { dispatchParents, agentTodos, subscribeAll, workbench, workbenchLatest, workbenchReadFile, workbenchClose, workbenchMarkViewed, workbenchSetCurrent, workflowDefs, workflowRuns, workflowError, workflowRun, workflowCancel, workflowEdit, workflowRefresh, formDock, formDockLatest } = ws;
 
   // When dispatch is active, subscribe to all agents to receive their permission/todo events
   useEffect(() => {
@@ -51,6 +51,13 @@ export function App() {
     if (expandedDock === 'workflow') workflowRefresh();
   }, [expandedDock, workflowRefresh]);
 
+  // 新 dock 表单到达：抢前台展开 Workbench（仅当属于当前选中群组）
+  useEffect(() => {
+    if (!formDockLatest) return;
+    if (formDockLatest.jid !== selectedJid) return;
+    setExpandedDock('workbench');
+  }, [formDockLatest, selectedJid]);
+
   const handleSelect = (jid: string) => {
     setSelectedJid(jid);
     if (!ws.subscribed.has(jid)) ws.subscribe(jid);
@@ -58,6 +65,7 @@ export function App() {
 
   const selectedGroup = ws.groups.find(g => g.jid === selectedJid);
   const workbenchState = selectedJid ? (workbench[selectedJid] ?? null) : null;
+  const dockForm = selectedJid ? (formDock[selectedJid] ?? null) : null;
 
   // Workbench 回调：固定到当前选中 jid
   const wbReadFile = useCallback((artifactId: string, path: string) => {
@@ -141,6 +149,7 @@ export function App() {
             onStop={() => ws.stopAgent(selectedJid!)}
             onResolvePermission={ws.resolvePermission}
             onResolveQuestion={ws.resolveQuestion}
+            onResolveForm={ws.resolveForm}
           />
         ) : (
           <div className="flex h-full items-center justify-center">
@@ -174,6 +183,8 @@ export function App() {
         closeArtifact={wbClose}
         selectArtifact={wbSelect}
         markViewed={wbMarkViewed}
+        dockForm={dockForm}
+        onResolveForm={ws.resolveForm}
       />
 
       <WorkflowPanel

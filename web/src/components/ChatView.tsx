@@ -15,9 +15,10 @@ interface Props {
   onStop: () => void;
   onResolvePermission: (requestId: string, optionKey: string) => void;
   onResolveQuestion: (requestId: string, answers: Record<number, number | number[]>, otherTexts?: Record<number, string>) => void;
+  onResolveForm: (requestId: string, values: Record<string, unknown>, submitted: boolean) => void;
 }
 
-export function ChatView({ group, messages, agentState, isCompacting, onSend, onPause, onResume, onStop, onResolvePermission, onResolveQuestion }: Props) {
+export function ChatView({ group, messages, agentState, isCompacting, onSend, onPause, onResume, onStop, onResolvePermission, onResolveQuestion, onResolveForm }: Props) {
   const [input, setInput]                   = useState('');
   const [pendingImages, setPendingImages]   = useState<ImageAttachment[]>([]);
   const [showStopConfirm, setShowStopConfirm] = useState(false);
@@ -221,6 +222,7 @@ export function ChatView({ group, messages, agentState, isCompacting, onSend, on
             message={msg}
             onResolvePermission={onResolvePermission}
             onResolveQuestion={onResolveQuestion}
+            onResolveForm={onResolveForm}
           />
         ))}
         {isProcessing && <TypingIndicator />}

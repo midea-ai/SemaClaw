@@ -36,6 +36,7 @@ import { getAgentAllowedWorkDirs, getAdminPermissionsConfig, getThinkingEnabled 
 import { DailyLogger } from '../memory/DailyLogger';
 import { MemoryManager, formatSearchResults } from '../memory/MemoryManager';
 import { PermissionBridge, PermissionBridgeOptions } from './PermissionBridge';
+import { FormBridge, type FormPayload } from './FormBridge';
 import { readDisabledSkills, invalidateDisabledSkillsCache } from '../skills/disabled.js';
 import { expandSkillsDir } from '../skills/expand.js';
 import type { MarketplaceManager } from '../marketplace/MarketplaceManager.js';
@@ -68,6 +69,8 @@ export interface AgentEventSink {
   notifyWorkbenchServiceReady?(chatJid: string, payload: WorkbenchServiceReadyPayload): void;
   notifyWorkbenchServiceCrashed?(chatJid: string, payload: WorkbenchServiceCrashedPayload): void;
   notifyWorkbenchServiceStopped?(chatJid: string, payload: WorkbenchServiceStoppedPayload): void;
+  notifyFormRequest?(chatJid: string, requestId: string, payload: FormPayload): void;
+  notifyFormResolved?(chatJid: string, requestId: string, values: Record<string, unknown>): void;
 }
 
 /** Agent 收到 message:complete 时的主代理 ID */
@@ -118,6 +121,7 @@ export class AgentPool {
   private bindings = new Map<string, GroupBinding>();
   private permissionBridge: PermissionBridge;
   private workbenchBridge: WorkbenchBridge;
+  private formBridge: FormBridge;
   private dailyLogger = new DailyLogger();
   private agentEventSink: AgentEventSink | null = null;
   /** 主 Agent 是否跳过权限审批（运行时状态，从 config.json 初始化） */
@@ -198,6 +202,12 @@ export class AgentPool {
     this.workbenchBridge = new WorkbenchBridge(
       Array.isArray(channels) ? channels : [channels],
     );
+    // 表单事件桥（FormUI 工具：富表单渲染 + 提交回传）
+    this.formBridge = new FormBridge(
+      Array.isArray(channels) ? channels : [channels],
+    );
+    // 表单推出 / 提交时重置超时计时器，避免填表等待期间超时
+    this.formBridge.setActivityCallback((jid) => this.notifyActivity(jid));
     // 从 config.json 初始化权限开关
     const permCfg = getAdminPermissionsConfig();
     this.skipMainAgentPermissions = permCfg.skipMainAgentPermissions;
@@ -614,6 +624,13 @@ export class AgentPool {
     this.workbenchBridge.onServiceStopped((chatJid, payload) => {
       sink.notifyWorkbenchServiceStopped?.(chatJid, payload);
     });
+    // FormBridge 通知接入
+    this.formBridge.onFormRequest((chatJid, requestId, payload) => {
+      sink.notifyFormRequest?.(chatJid, requestId, payload);
+    });
+    this.formBridge.onFormResolved((chatJid, requestId, values) => {
+      sink.notifyFormResolved?.(chatJid, requestId, values);
+    });
   }
 
   // ===== Workbench 反向操作（由 WsGateway 转入） =====
@@ -648,6 +665,11 @@ export class AgentPool {
   /** Web UI 侧批量回答问答（answers: {[qi]: oi | oi[]}, otherTexts: {[qi]: text}） */
   resolveAskQuestionBatch(requestId: string, answers: Record<number, number | number[]>, otherTexts?: Record<number, string>): boolean {
     return this.permissionBridge.resolveAskQuestionBatch(requestId, answers, otherTexts);
+  }
+
+  /** Web UI 侧提交表单（FormUI；submitted=false 表示用户跳过） */
+  resolveForm(requestId: string, values: Record<string, unknown>, submitted: boolean): boolean {
+    return this.formBridge.resolveForm(requestId, values, submitted);
   }
 
   /**
@@ -742,7 +764,7 @@ export class AgentPool {
     const EXCLUDED_TOOLS = ['Task']
     const ALL_POOLED_TOOLS = [
       'Bash', 'Glob', 'Grep', 'Read', 'Write', 'Edit',
-      'TodoWrite', 'Skill', 'NotebookEdit', 'AskUser', 'LaunchUI',
+      'TodoWrite', 'Skill', 'NotebookEdit', 'AskUser', 'LaunchUI', 'FormUI',
     ]
     const useTools = binding.allowedTools
       ? binding.allowedTools.filter(t => !EXCLUDED_TOOLS.includes(t))
@@ -773,7 +795,8 @@ export class AgentPool {
 
     const cleanupPermission = this.permissionBridge.bindCore(core, binding);
     const cleanupWorkbench = this.workbenchBridge.bindCore(core, binding);
-    this.bindEvents(core, binding, cleanupPermission, cleanupWorkbench);
+    const cleanupForm = this.formBridge.bindCore(core, binding);
+    this.bindEvents(core, binding, cleanupPermission, cleanupWorkbench, cleanupForm);
 
     try {
     /** 带超时的 addOrUpdateMCPServer，失败时仅打印 warning 不中断启动。内置服务默认 30s，marketplace/用户 MCP 传 180s */
@@ -1564,7 +1587,7 @@ export class AgentPool {
     this.workspaceWatchers.set(jid, () => fs.unwatchFile(stateFile, handler));
   }
 
-  private bindEvents(core: SemaCore, binding: GroupBinding, cleanupPermission?: () => void, cleanupWorkbench?: () => void): void {
+  private bindEvents(core: SemaCore, binding: GroupBinding, cleanupPermission?: () => void, cleanupWorkbench?: () => void, cleanupForm?: () => void): void {
     // Agent 完成响应时，将内容发送回频道 + 记录到每日日志
     const onMessageComplete = (data: MessageCompleteData) => {
       if (data.agentId !== MAIN_AGENT_ID) return; // 忽略子 Agent 的事件
@@ -1633,6 +1656,7 @@ export class AgentPool {
       core.off('session:error', onSessionError);
       cleanupPermission?.();
       cleanupWorkbench?.();
+      cleanupForm?.();
     });
   }
 }
