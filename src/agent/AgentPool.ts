@@ -291,10 +291,14 @@ export class AgentPool {
           ...(this.marketplaceManager?.getSkillExtraDirs(_disabled) ?? []),
           ...expandSkillsDir(path.join(workingDir, 'skills'), 'workspace', _disabled),
         ];
-        // SemaCore.engine.initialConfig 是可变对象，直接更新 skillsExtraDirs
+        // SemaCore.session.engine.initialConfig 是可变对象，直接更新 skillsExtraDirs。
+        // ⚠ kernel/session 重构后 engine 下沉到 core.session.engine（旧路径 core.engine 已失效，
+        // 会导致此处静默 no-op、reloadSkills 沿用构造时的旧 skillsExtraDirs，热加载手动新增的
+        // skill 永远扫不到）。Stage A 临时穿透 private 访问，待 sema-core 暴露 updateSkillsExtraDirs。
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const engineConfig = (core as any)?.engine?.initialConfig;
+        const engineConfig = (core as any)?.session?.engine?.initialConfig;
         if (engineConfig) engineConfig.skillsExtraDirs = freshDirs;
+        else console.warn(`[AgentPool] reloadAllSkills: cannot reach engine.initialConfig for ${jid}; skillsExtraDirs not refreshed`);
       }
       core.reloadSkills(_disabled);
     }
@@ -1404,6 +1408,10 @@ export class AgentPool {
     }
     try {
       await core.createSession();
+      // createSession 内部经 initializePlugins 重建【全局】skill registry，但该路径不带 disabled
+      // 过滤——~/.sema/skills 等 sema-core base 目录的 skill 会被原样放回。这里补一刀 post-filter，
+      // 与 getOrCreateInternal 创建时的处理一致，否则 stop/reset 后 disabled skill 会复活。
+      core.reloadSkills(readDisabledSkills());
       // createSession 内部 clearAllState() 后 updateState('idle') 因 idle===idle 不触发事件，
       // 手动通知前端重置到 idle，否则界面永远停留在 processing 状态。
       this.agentEventSink?.notifyAgentState(jid, 'idle');

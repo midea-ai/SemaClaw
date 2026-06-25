@@ -15,6 +15,7 @@ import { SemaCore } from 'sema-core';
 import type { MessageCompleteData, StateUpdateData, SessionErrorData } from 'sema-core/event';
 import type { SemaCoreConfig } from 'sema-core/types';
 import type { MCPServerConfig, MCPScopeType } from 'sema-core/mcp';
+import { readDisabledSkills } from '../skills/disabled.js';
 
 const MAIN_AGENT_ID = 'main';
 const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
@@ -119,6 +120,10 @@ export async function runOneShot(opts: OneShotOptions): Promise<OneShotResult> {
   }
 
   await core.createSession(`session-${instanceId}`);
+  // createSession 内部 initializePlugins 不带 disabled 过滤地重建【全局】skill registry。
+  // 补一刀 post-filter，确保 ~/.sema/skills 等 base 目录的 disabled skill 在 isolated agent 里也被排除，
+  // 并避免污染进程级共享的全局 registry。
+  core.reloadSkills(readDisabledSkills());
 
   const allTexts: string[] = [];
   let turnCount = 0;

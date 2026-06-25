@@ -177,6 +177,11 @@ export class VirtualWorkerPool {
         if (sessionTimer) clearTimeout(sessionTimer);
       }
 
+      // createSession 内部 initializePlugins 不带 disabled 过滤地重建【全局】skill registry，
+      // ~/.sema/skills 等 base 目录的 disabled skill 会被放回，且因 registry 进程级共享会外溢污染主 agent。
+      // 这里补一刀 post-filter，与 AgentPool 创建/重置路径一致。
+      core.reloadSkills(readDisabledSkills());
+
       // 绑定 PermissionBridge（权限请求转发到前端，使用 virtual:{taskId} 作为 jid）
       const taskId = options?.taskId ?? instanceId;
       let cleanupPermission: (() => void) | undefined;
