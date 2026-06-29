@@ -172,23 +172,23 @@ export function AgentConsole({ dispatchParents, agentTodos, messages, groups, ag
             </div>
           )}
 
-          {/* Agent todos */}
-          {(selectedTask || Object.keys(agentTodos).length > 0) && (
+          {/* Agent todos — always render ALL todolists; selecting a task highlights & scrolls to its list */}
+          {hasTodos && (
             <div className="flex flex-col border-t border-gray-100">
               <div className="flex items-center gap-2 px-3 py-1.5 border-b border-gray-100 flex-shrink-0">
-                <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">
-                  {selectedTask ? `Todos — ${selectedAgentTodos?.[1]?.agentName ?? selectedTask.agentId}` : 'Agent Todos'}
-                </span>
+                <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Agent Todos</span>
+                {selectedAgentTodos && (
+                  <span className="text-[10px] text-[#5BBFE8] font-medium truncate">
+                    ▸ {selectedAgentTodos[1]?.agentName ?? selectedTask?.agentId}
+                  </span>
+                )}
               </div>
               <div className="p-2">
-                {selectedTask && selectedAgentTodos ? (
-                  <AgentTodoPanel
-                    agentTodos={{ [selectedAgentTodos[0]]: selectedAgentTodos[1] }}
-                    groups={groups}
-                  />
-                ) : (
-                  <AgentTodoPanel agentTodos={agentTodos} groups={groups} />
-                )}
+                <AgentTodoPanel
+                  agentTodos={agentTodos}
+                  groups={groups}
+                  highlightJid={selectedAgentTodos?.[0] ?? null}
+                />
               </div>
             </div>
           )}

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import type { AgentTodosEntry } from '../types';
 
 const AGENT_COLORS: Record<string, string> = {
@@ -19,10 +19,26 @@ function agentInitials(name: string): string {
 interface AgentTodoPanelProps {
   agentTodos: Record<string, AgentTodosEntry>; // keyed by jid
   groups: { jid: string; folder: string; name: string }[];
+  /** jid of the todolist to highlight & scroll into view (driven by selected task) */
+  highlightJid?: string | null;
 }
 
-export function AgentTodoPanel({ agentTodos, groups }: AgentTodoPanelProps) {
+export function AgentTodoPanel({ agentTodos, groups, highlightJid }: AgentTodoPanelProps) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const cardRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+
+  // 选中某个 task 时：自动展开其关联 todolist 并滚动到可视区域（联动框选）
+  useEffect(() => {
+    if (!highlightJid) return;
+    setCollapsed(prev => {
+      if (!prev.has(highlightJid)) return prev;
+      const next = new Set(prev);
+      next.delete(highlightJid);
+      return next;
+    });
+    const el = cardRefs.current.get(highlightJid);
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }, [highlightJid]);
 
   const entries = Object.entries(agentTodos).filter(([, v]) => v.todos.length > 0);
   if (entries.length === 0) return null;
@@ -45,9 +61,21 @@ export function AgentTodoPanel({ agentTodos, groups }: AgentTodoPanelProps) {
         const total = entry.todos.length;
         const pct = total > 0 ? Math.round((done / total) * 100) : 0;
         const isOpen = !collapsed.has(jid);
+        const isHighlighted = highlightJid === jid;
 
         return (
-          <div key={jid} className="border border-gray-100 rounded-lg bg-white overflow-hidden">
+          <div
+            key={jid}
+            ref={(el) => {
+              if (el) cardRefs.current.set(jid, el);
+              else cardRefs.current.delete(jid);
+            }}
+            className={`rounded-lg bg-white overflow-hidden transition-all ${
+              isHighlighted
+                ? 'border border-[#5BBFE8] ring-2 ring-[#5BBFE8]/40 shadow-sm'
+                : 'border border-gray-100'
+            }`}
+          >
             <button
               className="w-full flex items-center gap-2 px-3 py-2 bg-gray-50 hover:bg-gray-100 transition-colors"
               onClick={() => toggle(jid)}
