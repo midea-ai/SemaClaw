@@ -18,6 +18,8 @@ import { config } from '../config';
 import { readDisabledSkills } from '../skills/disabled.js';
 import { expandSkillsDir } from '../skills/expand.js';
 import { loadAndResolveHookConfig } from '../hooks/HookConfigLoader';
+import { injectCapabilityMCP } from '../mcp/mcpHelper';
+import { getMarketplaceManager } from '../marketplace/MarketplaceManager';
 
 export type TodosNotifyFn = (agentJid: string, agentName: string, todos: { content: string; status: string; activeForm?: string }[]) => void;
 
@@ -37,7 +39,7 @@ const VIRTUAL_EXCLUDED_TOOLS = ['Task', 'AskUser'];
 /** 所有非 admin 池化工具集 */
 const ALL_POOLED_TOOLS = [
   'Bash', 'Glob', 'Grep', 'Read', 'Write', 'Edit',
-  'TodoWrite', 'Skill', 'NotebookEdit',
+  'TodoWrite', 'Skill', 'NotebookEdit', 'ToolSearch',
 ];
 
 let instanceCounter = 0;
@@ -120,9 +122,11 @@ export class VirtualWorkerPool {
       if (abortController.signal.aborted) throw new Error('Cancelled');
 
       // Resolve tool set
-      const useTools = persona.tools
+      const baseTools = persona.tools
         ? persona.tools.filter(t => !VIRTUAL_EXCLUDED_TOOLS.includes(t))
         : ALL_POOLED_TOOLS.filter(t => !VIRTUAL_EXCLUDED_TOOLS.includes(t));
+      // Tool-search defer loading：统一确保 ToolSearch 开启（persona.tools 自带列表时补上）
+      const useTools = baseTools.includes('ToolSearch') ? baseTools : [...baseTools, 'ToolSearch'];
 
       // 构建 skillsExtraDirs（与 AgentPool 同源）
       const _disabled = readDisabledSkills();
@@ -143,7 +147,9 @@ export class VirtualWorkerPool {
       const marketplaceHookFiles = this.getMarketplaceHookFiles?.() ?? [];
       const { hookConfig, hookEnv } = loadAndResolveHookConfig(globalConfigDir, workspaceDir, marketplaceHookFiles);
 
-      // Create temporary SemaCore instance (no MCP servers)
+      // Create temporary SemaCore instance.
+      // skipMCPInit 仍为 true：不从 temp 目录自动 init MCP，改为下方手动注入"能力面"MCP
+      // （与 AgentPool 同范式，避免全局 MCP 并发 init 卡死）。
       core = new SemaCore({
         instanceId,
         agentDataDir: tempDir,
@@ -159,6 +165,17 @@ export class VirtualWorkerPool {
         skipMCPInit: true,
         ...(hookConfig ? { hooks: hookConfig, hookEnv } : {}),
       } as any);
+
+      // 注入"能力面"MCP（marketplace + 用户全局），**不含** semaclaw 控制面 MCP
+      // （dispatch/admin/send/schedule/virtual/...）——虚拟 worker 是受派的子任务执行体，
+      // 不应有编排/管群/发消息特权，更不能 run_persona 自我递归。
+      // 连接经 MCPMux 全进程复用（config-hash 去重 + 引用计数）：主 agent/probe 预热过的 config
+      // 在这里只 refcount++，不重启子进程。配合 ToolSearch，工具 schema 再按需加载。
+      await injectCapabilityMCP(core, {
+        marketplaceDefs: getMarketplaceManager()?.getMCPServerDefs() ?? [],
+        configHome: config.paths.configHome,
+        label: `VirtualWorker:${persona.name}`,
+      });
 
       // createSession with timeout + abort protection
       let sessionTimer: ReturnType<typeof setTimeout> | null = null;

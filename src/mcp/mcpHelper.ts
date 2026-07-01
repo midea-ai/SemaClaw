@@ -5,6 +5,7 @@
  * 构建正确的 MCPServerConfig。
  */
 
+import * as fs from 'fs';
 import * as path from 'path';
 import type { MCPServerConfig } from 'sema-core/mcp';
 
@@ -216,5 +217,73 @@ export function feishuWikiMCPConfig(opts: {
       FEISHU_DOMAIN: opts.domain ?? 'feishu',
     },
   };
+}
+
+/** injectCapabilityMCP 所需的最小 core 接口 */
+type MCPAddableCore = {
+  addOrUpdateMCPServer: (config: MCPServerConfig, scope: 'project' | 'user') => Promise<unknown>;
+};
+
+/**
+ * 注入"能力面"MCP——marketplace 插件 + 用户全局 mcp.json，**不含** semaclaw 自带控制面 MCP
+ * （schedule / workspace / dispatch / memory / send / virtual / feishu-wiki）。
+ *
+ * 主 agent 与虚拟 worker 共用，使"哪些 MCP 算能力面、可下放给 worker"这条边界单点定义。
+ * 控制面由各调用方在调用本函数之外、按自身权限语义单独 addOrUpdateMCPServer。
+ *
+ * 连接成本：sema-core 的 MCPMux 按 config-hash 去重 + 引用计数，相同 config 的子进程全进程复用。
+ * 故 marketplace/用户全局这类"带群无关"config，主 agent / warmup probe 连过后，虚拟 worker 这里
+ * 只是 refcount++ 并用缓存 tools 现搭 per-session 适配器（便宜），不重启子进程。真正冷启动（180s
+ * 超时即为此设）只发生在某 config 从未被任何 session 预热过的首次连接。
+ */
+export async function injectCapabilityMCP(
+  core: MCPAddableCore,
+  opts: {
+    /** marketplace 插件 MCP 定义（调用方自行从其 MarketplaceManager 取，避免本模块反向依赖）。 */
+    marketplaceDefs?: MCPServerConfig[];
+    /** 用户全局配置目录（读取其下 mcp.json）。 */
+    configHome: string;
+    /** 日志前缀。 */
+    label: string;
+    /** 单个 server 连接超时，默认 180s。 */
+    timeoutMs?: number;
+    /** 每个成功加入的用户 MCP server 名回调（如主 agent 用于后续清理跟踪）。 */
+    onUserServerAdded?: (name: string) => void;
+  },
+): Promise<void> {
+  const timeoutMs = opts.timeoutMs ?? 180_000;
+  const addMCP = async (cfg: MCPServerConfig, sub: string): Promise<void> => {
+    try {
+      await Promise.race([
+        core.addOrUpdateMCPServer(cfg, 'project'),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error(`${sub} MCP connect timeout (${timeoutMs / 1000}s)`)), timeoutMs),
+        ),
+      ]);
+    } catch (e) {
+      console.warn(`[${opts.label}] ${sub} MCP unavailable: ${e}`);
+    }
+  };
+
+  // marketplace 插件 MCP
+  for (const cfg of opts.marketplaceDefs ?? []) {
+    await addMCP(cfg, `Marketplace[${cfg.name}]`);
+  }
+
+  // 用户全局 MCP（${configHome}/mcp.json）
+  const userMCPPath = path.join(opts.configHome, 'mcp.json');
+  if (fs.existsSync(userMCPPath)) {
+    try {
+      const data = JSON.parse(fs.readFileSync(userMCPPath, 'utf-8')) as { mcpServers?: Record<string, unknown> };
+      for (const [name, cfg] of Object.entries(data.mcpServers ?? {})) {
+        if ((cfg as Record<string, unknown>).enabled !== false) {
+          await addMCP({ ...(cfg as MCPServerConfig), name }, `User[${name}]`);
+          opts.onUserServerAdded?.(name);
+        }
+      }
+    } catch (e) {
+      console.warn(`[${opts.label}] Failed to load user MCP config: ${e}`);
+    }
+  }
 }
 

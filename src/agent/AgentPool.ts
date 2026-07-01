@@ -22,7 +22,7 @@ import type { ScheduledTask, MessageAttachment } from '../types';
 import { GroupBinding, IChannel } from '../types';
 import { buildAgentInput, type ImageAttachment } from './InputBuilder';
 import { config } from '../config';
-import { scheduleMCPConfig, workspaceMCPConfig, memoryMCPConfig, dispatchMCPConfig, feishuWikiMCPConfig, virtualMCPConfig } from '../mcp/mcpHelper';
+import { scheduleMCPConfig, workspaceMCPConfig, memoryMCPConfig, dispatchMCPConfig, feishuWikiMCPConfig, virtualMCPConfig, injectCapabilityMCP } from '../mcp/mcpHelper';
 import { getFeishuApps } from '../gateway/GroupManager';
 import type { PermissionPayload, AskQuestionPayload } from './PermissionBridge';
 import type {
@@ -769,10 +769,14 @@ export class AgentPool {
     const ALL_POOLED_TOOLS = [
       'Bash', 'Glob', 'Grep', 'Read', 'Write', 'Edit',
       'TodoWrite', 'Skill', 'NotebookEdit', 'AskUser', 'LaunchUI', 'FormUI',
+      'ToolSearch',
     ]
-    const useTools = binding.allowedTools
+    const baseTools = binding.allowedTools
       ? binding.allowedTools.filter(t => !EXCLUDED_TOOLS.includes(t))
       : ALL_POOLED_TOOLS
+    // Tool-search defer loading：统一确保 ToolSearch 开启（binding 自带 allowedTools 时补上），
+    // 否则 sema-core 侧 deferEnabled=false，MCP 工具不会走按需加载。
+    const useTools = baseTools.includes('ToolSearch') ? baseTools : [...baseTools, 'ToolSearch']
 
     // 加载 hook 配置（全局 ~/.semaclaw/ + workspace + 插件市场）
     const globalConfigDir = path.dirname(config.paths.globalConfigPath);
@@ -884,26 +888,14 @@ export class AgentPool {
       }
     }
 
-    // 注入 Marketplace 插件 MCP 服务器（首次可能需要下载依赖，给 180s）
-    for (const cfg of this.marketplaceManager?.getMCPServerDefs() ?? []) {
-      await addMCP(cfg as Parameters<typeof core.addOrUpdateMCPServer>[0], `Marketplace[${cfg.name}]`, 180_000);
-    }
-
-    // 注入用户全局 MCP 配置（${SEMACLAW_CONFIG_HOME}/mcp.json，同样给 180s）
-    const userMCPPath = path.join(config.paths.configHome, 'mcp.json');
-    if (fs.existsSync(userMCPPath)) {
-      try {
-        const userMCPData = JSON.parse(fs.readFileSync(userMCPPath, 'utf-8')) as { mcpServers?: Record<string, unknown> };
-        for (const [name, cfg] of Object.entries(userMCPData.mcpServers ?? {})) {
-          if ((cfg as Record<string, unknown>).enabled !== false) {
-            await addMCP({ ...(cfg as Parameters<typeof core.addOrUpdateMCPServer>[0]), name }, `User[${name}]`, 180_000);
-            this.userMCPServerNames.add(name);
-          }
-        }
-      } catch (e) {
-        console.warn(`[AgentPool] Failed to load user MCP config: ${e}`);
-      }
-    }
+    // 注入"能力面"MCP（marketplace 插件 + 用户全局 mcp.json）。控制面已在上方按群组/权限单独注入。
+    // 与虚拟 worker 共用同一注入器，使"能力面"边界单点定义（见 mcpHelper.injectCapabilityMCP）。
+    await injectCapabilityMCP(core, {
+      marketplaceDefs: (this.marketplaceManager?.getMCPServerDefs() ?? []) as Parameters<typeof core.addOrUpdateMCPServer>[0][],
+      configHome: config.paths.configHome,
+      label: `AgentPool:${binding.folder}`,
+      onUserServerAdded: (name) => this.userMCPServerNames.add(name),
+    });
 
     memSnap('after memory MCP');
     // 初始化 MemoryManager 索引（首次全量扫描 + 文件监听）
@@ -1162,7 +1154,10 @@ export class AgentPool {
     ];
 
     const result = await runOneShot({
-      instanceId: `isolated-${task.id}`,
+      // 每次 fire 唯一 id：避免同一定时任务重 fire(主 agent 阻塞/积压/热重载)时
+      // 复用 `session-isolated-${task.id}` 历史 → loadHistory resume 旧会话 → 重复 prompt 崩溃。
+      // 与 workflow step(`wf-${step.id}-${Date.now()}`)/ oneshot 默认 id 对齐，保证 isolated 真一次性。
+      instanceId: `isolated-${task.id}-${Date.now().toString(36)}`,
       prompt: effectivePrompt,
       agentDataDir,
       workingDir,
