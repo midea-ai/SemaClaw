@@ -771,6 +771,8 @@ export class AgentPool {
       'TodoWrite', 'Skill', 'NotebookEdit', 'AskUser', 'LaunchUI', 'FormUI',
       'ToolSearch',
     ]
+    // 保留在 useTools（构建）但默认按需加载的低频内置工具
+    const DEFER_BUILTIN_TOOLS = ['NotebookEdit', 'FormUI']
     const baseTools = binding.allowedTools
       ? binding.allowedTools.filter(t => !EXCLUDED_TOOLS.includes(t))
       : ALL_POOLED_TOOLS
@@ -790,6 +792,8 @@ export class AgentPool {
       workingDir,
       agentMode: 'Agent',
       useTools,
+      // 低频内置工具默认延迟加载：只在 catalog 列名，由模型 ToolSearch 后才进工具数组，省 schema token
+      deferBuiltinTools: DEFER_BUILTIN_TOOLS,
       logLevel: 'warn',
       skillsExtraDirs,
       skipFileEditPermission: skipPerms,

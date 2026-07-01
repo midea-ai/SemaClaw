@@ -460,6 +460,7 @@ async function runCLI(): Promise<void> {
     .option('--working-dir <dir>', 'Working directory for tools (default: cwd)')
     .option('--agent-data-dir <dir>', 'Agent data directory (CLAUDE.md / .sema/) — defaults to working-dir')
     .option('--tools <list>', 'Comma-separated tool whitelist (default: all tools)')
+    .option('--mcp [path]', 'Connect MCP servers and auto-enable ToolSearch. Bare --mcp uses the global mcp.json (configHome/mcp.json); --mcp <path> uses that mcp.json-shaped file. Default: no MCP')
     .option('--skills-dir <dir...>', 'Extra skills directory (repeatable)')
     .option('--output <fmt>', 'Output format: json | text | raw', 'text')
     .option('--timeout <ms>', 'Timeout in milliseconds', (v: string) => parseInt(v, 10))
@@ -471,6 +472,7 @@ async function runCLI(): Promise<void> {
       workingDir?: string;
       agentDataDir?: string;
       tools?: string;
+      mcp?: string | boolean;
       skillsDir?: string[];
       output?: string;
       timeout?: number;
@@ -489,6 +491,7 @@ async function runCLI(): Promise<void> {
         workingDir: opts.workingDir,
         agentDataDir: opts.agentDataDir,
         tools: opts.tools,
+        mcp: opts.mcp,
         skillsDir: opts.skillsDir,
         output: out,
         timeout: opts.timeout,

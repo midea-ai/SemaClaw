@@ -156,6 +156,8 @@ export class VirtualWorkerPool {
         workingDir: workspaceDir,
         agentMode: 'Agent',
         useTools,
+        // 低频内置工具默认延迟加载（只列 catalog，ToolSearch 后进数组）
+        deferBuiltinTools: ['NotebookEdit'],
         logLevel: 'warn',
         skillsExtraDirs,
         skipFileEditPermission: skipPerms,

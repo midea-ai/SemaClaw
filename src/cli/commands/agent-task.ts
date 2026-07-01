@@ -16,8 +16,10 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import type { MCPServerConfig, MCPScopeType } from 'sema-core/mcp';
 import { runOneShot } from '../../agent/IsolatedRunner';
 import { config } from '../../config';
+import { getMarketplaceManager } from '../../marketplace/MarketplaceManager.js';
 import { readDisabledSkills } from '../../skills/disabled.js';
 import { expandSkillsDir } from '../../skills/expand.js';
 
@@ -32,6 +34,13 @@ export interface AgentTaskCliOptions {
   timeout?: number;
   instanceId?: string;
   systemPrompt?: string;
+  /**
+   * MCP 接入（默认不连任何 MCP）：
+   *   - true（裸 `--mcp`）：完整"能力面" = marketplace 已开启的 server + 用户全局 mcp.json，对齐主 agent。
+   *   - string（`--mcp <path>`）：仅该 mcp.json 形状文件（{ mcpServers: { name: config } }），由调用方框定，不含 marketplace。
+   * 均不含 semaclaw 控制面 MCP（memory/schedule/… 需持久化群组身份，一次性 agent 拿不到）。
+   */
+  mcp?: string | boolean;
 }
 
 function readStdin(): Promise<string> {
@@ -81,9 +90,16 @@ export async function cmdAgentTask(opts: AgentTaskCliOptions): Promise<void> {
   assertDirExists(workingDir, '--working-dir');
   if (opts.agentDataDir) assertDirExists(agentDataDir, '--agent-data-dir');
 
-  const useTools = opts.tools
+  // MCP 可选（默认不连，保持轻量）。连了就自动补 ToolSearch，让 MCP 工具按需加载而非全量 inline。
+  const mcpConfigs = resolveMcpConfigs(opts.mcp);
+
+  let useTools = opts.tools
     ? opts.tools.split(',').map(t => t.trim()).filter(Boolean)
     : null;
+  // useTools=null 时全部内置工具（含 ToolSearch）已在，defer 天然开启；仅在显式白名单里补 ToolSearch。
+  if (mcpConfigs.length && useTools && !useTools.includes('ToolSearch')) {
+    useTools = [...useTools, 'ToolSearch'];
+  }
 
   const _disabled = readDisabledSkills();
   const skillsExtraDirs = [
@@ -102,6 +118,7 @@ export async function cmdAgentTask(opts: AgentTaskCliOptions): Promise<void> {
     workingDir,
     agentDataDir,
     useTools,
+    mcpConfigs,
     skillsExtraDirs,
     systemPrompt: opts.systemPrompt,
     timeoutMs: opts.timeout && opts.timeout > 0 ? opts.timeout : undefined,
@@ -140,6 +157,67 @@ export async function cmdAgentTask(opts: AgentTaskCliOptions): Promise<void> {
   // SemaCore / Anthropic SDK / 内部 timer 可能持有 keep-alive 句柄，
   // 让事件循环空转。CLI 任务结束即退出，不等这些自然超时。
   process.exit(0);
+}
+
+type ScopedMCP = { config: MCPServerConfig; scope: MCPScopeType };
+
+/**
+ * 解析 --mcp 语义（默认不连任何 MCP）：
+ *   - true（裸 --mcp）：完整"能力面" = marketplace 已开启的 server + 用户全局 mcp.json，对齐主 agent。
+ *   - string（--mcp <path>）：仅该 mcp.json 形状文件，由调用方框定，不含 marketplace。
+ * 全都以 'project' scope 注入（一次性 agent 无跨层覆盖需求）。
+ */
+function resolveMcpConfigs(mcp: string | boolean | undefined): ScopedMCP[] {
+  if (mcp === true) {
+    const out: ScopedMCP[] = [];
+    // marketplace 已开启插件的 MCP（同步扫描，名字已带 mkt__<plugin>__<server> 前缀）
+    for (const def of getMarketplaceManager().getMCPServerDefs()) {
+      out.push({ config: def as unknown as MCPServerConfig, scope: 'project' });
+    }
+    // 用户全局 mcp.json（缺失属正常，软处理）
+    out.push(...loadMcpConfigsFromFile(path.join(config.paths.configHome, 'mcp.json'), false));
+    return out;
+  }
+  if (typeof mcp === 'string') {
+    return loadMcpConfigsFromFile(resolveUserPath(mcp), true);
+  }
+  return [];
+}
+
+/**
+ * 从 mcp.json 形状的文件加载 MCP server 配置。
+ * 形状：{ "mcpServers": { "<name>": { transport, command, args, env, enabled? } } }
+ * 与用户全局 ~/.semaclaw/mcp.json 同构，调用方可直接复用这些片段。
+ * enabled === false 的 server 跳过。required=false 时文件缺失软处理返回空。
+ */
+function loadMcpConfigsFromFile(
+  mcpPath: string,
+  required: boolean,
+): ScopedMCP[] {
+  if (!required && !fs.existsSync(mcpPath)) {
+    console.error(`[agent-task] no global MCP config at ${mcpPath}; continuing without MCP`);
+    return [];
+  }
+  let raw: string;
+  try {
+    raw = fs.readFileSync(mcpPath, 'utf-8');
+  } catch {
+    console.error(`Error: --mcp file not found or unreadable: ${mcpPath}`);
+    process.exit(2);
+  }
+  let parsed: { mcpServers?: Record<string, unknown> };
+  try {
+    parsed = JSON.parse(raw);
+  } catch (e) {
+    console.error(`Error: --mcp file is not valid JSON: ${e}`);
+    process.exit(2);
+  }
+  const out: Array<{ config: MCPServerConfig; scope: MCPScopeType }> = [];
+  for (const [name, cfg] of Object.entries(parsed.mcpServers ?? {})) {
+    if ((cfg as Record<string, unknown>).enabled === false) continue;
+    out.push({ config: { ...(cfg as MCPServerConfig), name }, scope: 'project' });
+  }
+  return out;
 }
 
 function assertDirExists(dir: string, flagName: string): void {
