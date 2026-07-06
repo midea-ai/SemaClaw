@@ -417,7 +417,10 @@ async function runCLI(): Promise<void> {
     .option('--tags <tags>', 'Comma-separated tags (e.g. rust,async)')
     .option('--source <src>', 'Source: agent | manual | url', 'agent')
     .option('--msg <message>', 'Custom git commit message')
-    .action(async (opts: { path: string; tags?: string; source?: string; msg?: string }) => {
+    .option('--type <type>', 'Concept type (OKF), e.g. note | paper-note | runbook | reference')
+    .option('--desc <text>', 'One-line description of the document (OKF)')
+    .option('--resource <url>', 'URL or wiki-relative path to the original/associated resource (OKF)')
+    .action(async (opts: { path: string; tags?: string; source?: string; msg?: string; type?: string; desc?: string; resource?: string }) => {
       const { cmdWikiSave } = await import('./cli/commands/wiki.js')
       await cmdWikiSave(opts)
     })

@@ -7,6 +7,11 @@ export interface Frontmatter {
   updated: string;
   tags: string[];
   source: string;
+  /** OKF 对齐字段 */
+  type?: string;
+  title?: string;
+  description?: string;
+  resource?: string;
 }
 
 export interface DirNode {
@@ -29,6 +34,8 @@ export interface SearchResult {
   title: string;
   tags: string[];
   updated: string;
+  type?: string;
+  description?: string;
 }
 
 export interface WikiStats {

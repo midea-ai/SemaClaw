@@ -130,6 +130,7 @@ export default function WikiView({ onGoHome }: Props) {
               onLoad={wiki.fetchDoc}
               onSave={handleSaveDoc}
               onRefresh={handleRefreshDoc}
+              onNavigate={handleSelectDoc}
             />
           )}
 

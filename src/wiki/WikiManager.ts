@@ -25,6 +25,12 @@ export interface Frontmatter {
   updated: string;
   tags: string[];
   source: string;
+  /** OKF (Open Knowledge Format) 对齐字段：概念类型，如 note / paper-note / runbook / reference */
+  type?: string;
+  title?: string;
+  description?: string;
+  /** 指向原始资源（URL 或 wiki 内相对路径，如生成的 HTML 产物） */
+  resource?: string;
 }
 
 export interface DirNode {
@@ -47,6 +53,8 @@ export interface SearchResult {
   title: string;
   tags: string[];
   updated: string;
+  type?: string;
+  description?: string;
 }
 
 export interface WikiStats {
@@ -137,7 +145,15 @@ export class WikiManager {
   async writeFile(
     relPath: string,
     content: string,
-    opts?: { source?: string; tags?: string[]; commitMsg?: string },
+    opts?: {
+      source?: string;
+      tags?: string[];
+      commitMsg?: string;
+      type?: string;
+      title?: string;
+      description?: string;
+      resource?: string;
+    },
   ): Promise<void> {
     const absPath = this.safePath(relPath);
     const isNew = !fs.existsSync(absPath);
@@ -149,6 +165,10 @@ export class WikiManager {
       updated: now,
       tags: opts?.tags ?? existingFm.tags ?? [],
       source: opts?.source ?? existingFm.source ?? 'manual',
+      type: opts?.type ?? existingFm.type,
+      title: opts?.title ?? existingFm.title,
+      description: opts?.description ?? existingFm.description,
+      resource: opts?.resource ?? existingFm.resource,
     };
 
     const finalContent = this.injectFrontmatter(content, fm);
@@ -185,10 +205,18 @@ export class WikiManager {
         !query ||
         filenameLower.includes(queryLower) ||
         titleLower.includes(queryLower) ||
-        tagsLower.some(t => t.includes(queryLower));
+        tagsLower.some(t => t.includes(queryLower)) ||
+        (fm.description ?? '').toLowerCase().includes(queryLower);
 
       if (matches) {
-        results.push({ path: relPath, title, tags: fm.tags ?? [], updated: fm.updated ?? '' });
+        results.push({
+          path: relPath,
+          title: fm.title || title,
+          tags: fm.tags ?? [],
+          updated: fm.updated ?? '',
+          type: fm.type,
+          description: fm.description,
+        });
       }
     });
 
@@ -404,48 +432,75 @@ export class WikiManager {
     }
   }
 
-  /** 简单手写 YAML frontmatter 解析（避免引入额外依赖） */
-  private parseFrontmatter(content: string): { fm: Frontmatter; body: string } {
+  /** 简单手写 YAML frontmatter 解析（避免引入额外依赖）。restLines 保留未识别的原始行，写回时原样保留 */
+  private parseFrontmatter(content: string): { fm: Frontmatter; body: string; restLines: string[] } {
     const defaultFm: Frontmatter = { created: '', updated: '', tags: [], source: 'manual' };
-    if (!content.startsWith('---')) return { fm: defaultFm, body: content };
+    if (!content.startsWith('---')) return { fm: defaultFm, body: content, restLines: [] };
 
     const end = content.indexOf('\n---', 3);
-    if (end === -1) return { fm: defaultFm, body: content };
+    if (end === -1) return { fm: defaultFm, body: content, restLines: [] };
 
     const yamlBlock = content.slice(4, end);
     const body = content.slice(end + 4).replace(/^\n/, '');
     const fm: Frontmatter = { ...defaultFm };
+    const restLines: string[] = [];
+
+    const STRING_KEYS = new Set(['created', 'updated', 'source', 'type', 'title', 'description', 'resource']);
 
     for (const line of yamlBlock.split('\n')) {
       const colon = line.indexOf(':');
-      if (colon === -1) continue;
-      const key = line.slice(0, colon).trim();
-      const val = line.slice(colon + 1).trim();
+      const key = colon === -1 ? '' : line.slice(0, colon).trim();
 
-      if (key === 'created' || key === 'updated' || key === 'source') {
+      if (STRING_KEYS.has(key)) {
+        const val = this.unquote(line.slice(colon + 1).trim());
         (fm as unknown as Record<string, string>)[key] = val;
       } else if (key === 'tags') {
-        const tagStr = val.replace(/^\[/, '').replace(/\]$/, '');
+        const tagStr = line.slice(colon + 1).trim().replace(/^\[/, '').replace(/\]$/, '');
         fm.tags = tagStr.split(',').map(t => t.trim()).filter(Boolean);
+      } else if (line.trim()) {
+        restLines.push(line);
       }
     }
 
-    return { fm, body };
+    return { fm, body, restLines };
   }
 
   private injectFrontmatter(content: string, fm: Partial<Frontmatter>): string {
-    const { body } = this.parseFrontmatter(content);
+    const { body, restLines } = this.parseFrontmatter(content);
     const tags = fm.tags?.length ? `[${fm.tags.join(', ')}]` : '[]';
-    const header = [
+    const lines = [
       '---',
       `created: ${fm.created ?? ''}`,
       `updated: ${fm.updated ?? ''}`,
       `tags: ${tags}`,
       `source: ${fm.source ?? 'manual'}`,
-      '---',
-      '',
-    ].join('\n');
-    return header + body;
+    ];
+    for (const key of ['type', 'title', 'description', 'resource'] as const) {
+      const val = fm[key];
+      if (val) lines.push(`${key}: ${this.quoteIfNeeded(val)}`);
+    }
+    lines.push(...restLines);
+    lines.push('---', '');
+    return lines.join('\n') + body;
+  }
+
+  /** 去掉包裹字符串的成对引号并反转义，与 quoteIfNeeded 的转义严格对称（兼容外部工具写入的 YAML） */
+  private unquote(val: string): string {
+    if (val.length >= 2 && val.startsWith('"') && val.endsWith('"')) {
+      return val.slice(1, -1).replace(/\\(["\\])/g, '$1');
+    }
+    if (val.length >= 2 && val.startsWith("'") && val.endsWith("'")) {
+      return val.slice(1, -1).replace(/''/g, "'");
+    }
+    return val;
+  }
+
+  /** 值含 YAML 敏感字符时加引号，保证标准 YAML 解析器可读（OKF 互操作） */
+  private quoteIfNeeded(val: string): string {
+    if (/[:#]/.test(val) || /^[\s'"\[\]{}>|&*!%@`-]/.test(val)) {
+      return `"${val.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+    }
+    return val;
   }
 
   private extractTitle(content: string, relPath: string): string {

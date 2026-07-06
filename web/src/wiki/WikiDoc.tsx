@@ -19,6 +19,36 @@ interface Props {
   onLoad: (path: string) => void;
   onSave: (path: string, content: string) => Promise<void>;
   onRefresh: (path: string) => void;
+  /** 文档内相对 .md 链接点击时，在 SPA 内跳转到目标文档 */
+  onNavigate: (path: string) => void;
+}
+
+/** 判断是否带协议头的外部链接（http:、mailto: 等）或协议相对链接 */
+function isExternalHref(href: string): boolean {
+  return /^[a-z][a-z0-9+.-]*:/i.test(href) || href.startsWith('//');
+}
+
+/**
+ * 把文档内的相对链接解析为 wiki 根目录下的规范路径。
+ * currentPath 为当前文档的 wiki 相对路径；href 支持 ./、../、以及以 / 开头的 wiki 绝对路径。
+ */
+function resolveWikiPath(currentPath: string, href: string): string {
+  let clean = href.replace(/[?#].*$/, '');
+  try {
+    clean = decodeURI(clean);
+  } catch {
+    // 非法百分号转义（如 50%discount.md）：按原样处理，不让渲染崩溃
+  }
+  const segments = clean.startsWith('/')
+    ? clean.slice(1).split('/')
+    : [...currentPath.split('/').slice(0, -1), ...clean.split('/')];
+  const out: string[] = [];
+  for (const seg of segments) {
+    if (!seg || seg === '.') continue;
+    if (seg === '..') out.pop();
+    else out.push(seg);
+  }
+  return out.join('/');
 }
 
 function TagBadge({ tag }: { tag: string }) {
@@ -38,7 +68,7 @@ function relativeTime(iso: string): string {
   return `${Math.floor(h / 24)}天前`;
 }
 
-export function WikiDoc({ path, doc, loading, onBack, onLoad, onSave, onRefresh }: Props) {
+export function WikiDoc({ path, doc, loading, onBack, onLoad, onSave, onRefresh, onNavigate }: Props) {
   const [editing, setEditing] = useState(false);
   const [editContent, setEditContent] = useState('');
   const [saving, setSaving] = useState(false);
@@ -123,8 +153,11 @@ export function WikiDoc({ path, doc, loading, onBack, onLoad, onSave, onRefresh 
         <div className="flex-1 overflow-y-auto">
           <div className="max-w-3xl mx-auto px-8 py-6">
             {/* Meta */}
-            {(doc.frontmatter.tags.length > 0 || doc.frontmatter.updated) && (
-              <div className="flex items-center gap-3 mb-6 flex-wrap">
+            {(doc.frontmatter.tags.length > 0 || doc.frontmatter.updated || doc.frontmatter.type) && (
+              <div className="flex items-center gap-3 mb-2 flex-wrap">
+                {doc.frontmatter.type && (
+                  <span className="px-2 py-0.5 bg-gray-100 text-gray-500 text-xs rounded-full font-mono">{doc.frontmatter.type}</span>
+                )}
                 <div className="flex gap-1.5 flex-wrap">
                   {doc.frontmatter.tags.map(t => <TagBadge key={t} tag={t} />)}
                 </div>
@@ -133,10 +166,51 @@ export function WikiDoc({ path, doc, loading, onBack, onLoad, onSave, onRefresh 
                 )}
               </div>
             )}
+            {doc.frontmatter.description && (
+              <p className="text-sm text-gray-500 mb-2">{doc.frontmatter.description}</p>
+            )}
+            {doc.frontmatter.resource && (
+              isExternalHref(doc.frontmatter.resource) ? (
+                <a
+                  href={doc.frontmatter.resource}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1 text-xs text-amber-600 hover:text-amber-700 mb-6"
+                >
+                  关联资源 ↗
+                </a>
+              ) : (
+                <p className="text-xs text-gray-400 font-mono mb-6">关联资源: {doc.frontmatter.resource}</p>
+              )
+            )}
 
             {/* Markdown content */}
             <div className="prose prose-sm max-w-none prose-headings:font-semibold prose-code:text-amber-700 prose-code:bg-amber-50 prose-code:px-1 prose-code:rounded prose-pre:bg-gray-50 prose-pre:border prose-pre:border-gray-200">
-              <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
+                rehypePlugins={[rehypeHighlight]}
+                components={{
+                  a: ({ href, children, ...rest }) => {
+                    const h = href ?? '';
+                    if (h && !isExternalHref(h) && /\.md$/i.test(h.replace(/[?#].*$/, ''))) {
+                      const target = resolveWikiPath(path, h);
+                      return (
+                        <a
+                          href={h}
+                          onClick={e => { e.preventDefault(); onNavigate(target); }}
+                          {...rest}
+                        >
+                          {children}
+                        </a>
+                      );
+                    }
+                    if (isExternalHref(h)) {
+                      return <a href={h} target="_blank" rel="noreferrer" {...rest}>{children}</a>;
+                    }
+                    return <a href={h} {...rest}>{children}</a>;
+                  },
+                }}
+              >
                 {/* Strip frontmatter from display */}
                 {doc.content.startsWith('---')
                   ? doc.content.replace(/^---[\s\S]*?\n---\n?/, '')

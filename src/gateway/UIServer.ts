@@ -1124,14 +1124,15 @@ export class UIServer {
         return;
       }
 
-      // PUT /api/wiki/file — { path, content, commitMsg? }
+      // PUT /api/wiki/file — { path, content, commitMsg?, source?, tags?, type?, title?, description?, resource? }
       if (urlPath === '/api/wiki/file' && req.method === 'PUT') {
         const body = await this.readBody(req);
-        const { path: p, content, commitMsg, source, tags } = JSON.parse(body) as {
+        const { path: p, content, commitMsg, source, tags, type, title, description, resource } = JSON.parse(body) as {
           path: string; content: string; commitMsg?: string; source?: string; tags?: string[];
+          type?: string; title?: string; description?: string; resource?: string;
         };
         if (!p || content === undefined) { err('Missing path or content'); return; }
-        await wm.writeFile(p, content, { commitMsg, source, tags });
+        await wm.writeFile(p, content, { commitMsg, source, tags, type, title, description, resource });
         json({ path: p, updated: new Date().toISOString() });
         return;
       }

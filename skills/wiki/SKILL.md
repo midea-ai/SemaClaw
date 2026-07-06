@@ -1,13 +1,13 @@
 ---
 name: wiki
 description: Save learning/research documents to the personal wiki knowledge base and search existing content
-version: 1.0.0
+version: 1.1.0
 ---
 
 # Wiki Knowledge Base Management
 
 The user's personal knowledge base is maintained with the `semaclaw wiki` command.
-The wiki directory is located at `{home}/semaclaw/wiki/`, where `{home}` is the user's home directory (`~` on macOS/Linux, `%USERPROFILE%` on Windows).
+The wiki directory defaults to `{home}/semaclaw/wiki/` but may be relocated by configuration — `semaclaw wiki tree` prints the actual root path on its first line (`Wiki root: ...`); always use that path when accessing wiki files directly (e.g. `cp`).
 The knowledge base is organized by topic folders, with each document as a Markdown file.
 
 ## Writing New Documents to Wiki
@@ -27,29 +27,60 @@ The knowledge base is organized by topic folders, with each document as a Markdo
      ```
    - Completely uncertain → stage in `inbox/` and inform the user to categorize later
 
-3. **Save the document** (pipe full Markdown content via heredoc to stdin):
+3. **Search for related documents** so you can cross-link them (see "Linking Related Documents"):
+   ```
+   semaclaw wiki search "related topic"
+   ```
+
+4. **Save the document** (pipe full Markdown content via heredoc to stdin). Always provide `--type` and `--desc`:
    ```bash
-   cat <<'WIKI_EOF' | semaclaw wiki save --path "directory/filename.md" --tags "tag1,tag2"
+   cat <<'WIKI_EOF' | semaclaw wiki save --path "directory/filename.md" --tags "tag1,tag2" --type "note" --desc "One-line summary of what this document covers"
    # Document Title
 
    Document content...
    WIKI_EOF
    ```
 
+### Document Metadata (OKF-aligned)
+
+The wiki follows the Open Knowledge Format conventions: every document carries YAML frontmatter that both humans and agents can rely on.
+
+- `--type` (**always provide**): the concept type. Prefer one of: `note`, `paper-note`, `guide`, `runbook`, `reference`, `snippet`. Reuse types already present in the wiki before inventing a new one. **If unsure which type fits, use `note`** — broadly correct beats specific but wrong; never invent a speculative type.
+- `--desc` (**always provide**): a one-line description of the document. This is shown in the UI and used by search — write it for someone deciding whether to open the document.
+- `--resource` (optional): a URL or wiki-relative path pointing to the original/associated resource — the source article URL, an arXiv link, or a generated artifact (e.g. an HTML report saved alongside the note).
+
 ### Example
 
 ```bash
 # Save an article about Rust async
-cat <<'WIKI_EOF' | semaclaw wiki save --path "programming/rust/async-runtime.md" --tags "rust,async,tokio"
+cat <<'WIKI_EOF' | semaclaw wiki save --path "programming/rust/async-runtime.md" --tags "rust,async,tokio" --type "note" --desc "How Tokio's async runtime schedules tasks, with pitfalls" --resource "https://tokio.rs/tokio/tutorial"
 # Rust Async Runtime Explained
 
 ## Core Concepts
 
 Tokio is the most popular async runtime for Rust...
+
+## Related
+
+- [Rust ownership basics](../rust/ownership.md)
 WIKI_EOF
 ```
 
 Output JSON: `{"path": "programming/rust/async-runtime.md", "action": "created"}`
+
+## Linking Related Documents
+
+Documents form a knowledge graph through standard Markdown relative links — the wiki UI resolves them and navigates in place.
+
+- Before saving, run `semaclaw wiki search` for related topics. If related documents exist, add a `## Related` section at the end of the new document with relative links:
+  ```markdown
+  ## Related
+
+  - [Async runtime explained](../rust/async-runtime.md) — how the scheduler works
+  ```
+- Link paths are relative to the document's own location (`../rust/async-runtime.md`), or wiki-absolute starting with `/` (`/programming/rust/async-runtime.md`).
+- Also link inline where a concept is mentioned: `see [ownership](./ownership.md)`.
+- Do NOT use `[[wikilink]]` syntax — only standard Markdown links are supported.
 
 ## Organizing Existing Documents
 
@@ -74,9 +105,9 @@ Use this workflow when the user wants to organize, classify, or tidy up document
    - No match → create with `semaclaw wiki mkdir "path"`
    - Uncertain → place in `inbox/`
 
-4. **Copy the file** to the wiki (do not rewrite content):
+4. **Copy the file** to the wiki (do not rewrite content). Use the root path printed by `semaclaw wiki tree`:
    ```bash
-   cp "/source/path/document.md" "{home}/semaclaw/wiki/category/filename.md"
+   cp "/source/path/document.md" "<wiki-root>/category/filename.md"
    # or on Windows: copy "source" "dest"
    ```
 
@@ -85,9 +116,11 @@ Use this workflow when the user wants to organize, classify, or tidy up document
    ---
    tags: [tag1, tag2]
    source: /original/path/document.md
+   type: note
+   description: One-line summary of the document
    ---
    ```
-   Use the Edit tool to make this change — do not regenerate the file.
+   Use the Edit tool to make this change — do not regenerate the file. Unknown frontmatter keys already present are preserved by the wiki; do not remove them.
 
 
 ### When to use `mv` instead of `cp`

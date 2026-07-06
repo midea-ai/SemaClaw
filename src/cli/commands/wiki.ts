@@ -12,11 +12,12 @@
  */
 
 import * as path from 'path';
-import * as os from 'os';
+import { config } from '../../config.js';
 import { WikiManager, type WikiStats } from '../../wiki/WikiManager.js';
 
+/** 与 daemon/UI 共用同一解析链：WIKI_DIR > SEMACLAW_HOME > config.json paths.home > ~/semaclaw */
 function getWikiDir(): string {
-  return process.env.WIKI_DIR ?? path.join(os.homedir(), 'semaclaw', 'wiki');
+  return config.paths.wikiDir;
 }
 
 function getWiki(): WikiManager {
@@ -29,6 +30,7 @@ export async function cmdWikiTree(): Promise<void> {
   const wm = getWiki();
   await wm.ensureInit();
   const text = await wm.treeText();
+  console.log(`Wiki root: ${getWikiDir()}`);
   console.log(text || '(empty wiki)');
 }
 
@@ -39,6 +41,9 @@ export async function cmdWikiSave(opts: {
   tags?: string;
   source?: string;
   msg?: string;
+  type?: string;
+  desc?: string;
+  resource?: string;
 }): Promise<void> {
   if (!opts.path) {
     console.error('Error: --path is required');
@@ -63,6 +68,9 @@ export async function cmdWikiSave(opts: {
     tags,
     source: opts.source ?? 'agent',
     commitMsg: opts.msg,
+    type: opts.type,
+    description: opts.desc,
+    resource: opts.resource,
   });
 
   const result = { path: opts.path, action: 'created' };
