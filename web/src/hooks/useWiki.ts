@@ -115,7 +115,8 @@ export function useWiki() {
     await apiFetch('/api/wiki/file', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ path, content, source: opts?.source ?? 'manual', tags: opts?.tags }),
+      // source 不设默认值：编辑已有文档时保留其原有来源标记（agent 写的仍是 agent）
+      body: JSON.stringify({ path, content, source: opts?.source, tags: opts?.tags }),
     });
   }, []);
 

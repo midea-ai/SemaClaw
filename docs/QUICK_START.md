@@ -373,10 +373,11 @@ isAdmin Agent 可通过 `dispatch-server` MCP 协调多个子 Agent 并行执行
 
 ## Wiki 知识库
 
-`WikiManager` 提供 git 驱动的个人知识库，存储在 `~/semaclaw/wiki/`：
+`WikiManager` 提供 git 驱动的个人知识库，默认存储在 `~/semaclaw/wiki/`（跟随 `WIKI_DIR` / `SEMACLAW_HOME` / config.json 的 `paths.home` 重定位，`semaclaw wiki tree` 首行输出实际路径）：
 
-- YAML frontmatter 管理（created / updated / tags / source）
-- 目录树扫描、标签索引、git commit 历史
+- YAML frontmatter 管理（created / updated / tags / source，以及 OKF 对齐的 type / title / description / resource；未识别字段原样保留）
+- 目录树扫描、标签索引、git commit 历史，搜索匹配标题 / 文件名 / tags / description
+- 文档间用标准 Markdown 相对链接互联，Wiki UI 内点击直接跳转
 - 通过内置 `wiki` 技能或 Agent 调用进行读写和搜索
 
 ---

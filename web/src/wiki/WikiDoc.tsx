@@ -3,7 +3,7 @@
  * 查看模式（Markdown 渲染）和编辑模式（WikiEditor）切换
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
@@ -32,16 +32,22 @@ function isExternalHref(href: string): boolean {
  * 把文档内的相对链接解析为 wiki 根目录下的规范路径。
  * currentPath 为当前文档的 wiki 相对路径；href 支持 ./、../、以及以 / 开头的 wiki 绝对路径。
  */
-function resolveWikiPath(currentPath: string, href: string): string {
-  let clean = href.replace(/[?#].*$/, '');
+/** 解码单个路径段；非法百分号转义（如 50%discount.md）按原样返回，不让渲染崩溃 */
+function decodeSegment(seg: string): string {
   try {
-    clean = decodeURI(clean);
+    return decodeURIComponent(seg);
   } catch {
-    // 非法百分号转义（如 50%discount.md）：按原样处理，不让渲染崩溃
+    return seg;
   }
+}
+
+function resolveWikiPath(currentPath: string, href: string): string {
+  const clean = href.replace(/[?#].*$/, '');
+  // 先按编码形态切段再逐段解码：%2F 不会产生新分隔符，%23/%20 等能还原为文件名字面字符
+  const hrefSegs = (clean.startsWith('/') ? clean.slice(1) : clean).split('/').map(decodeSegment);
   const segments = clean.startsWith('/')
-    ? clean.slice(1).split('/')
-    : [...currentPath.split('/').slice(0, -1), ...clean.split('/')];
+    ? hrefSegs
+    : [...currentPath.split('/').slice(0, -1), ...hrefSegs];
   const out: string[] = [];
   for (const seg of segments) {
     if (!seg || seg === '.') continue;
@@ -101,6 +107,46 @@ export function WikiDoc({ path, doc, loading, onBack, onLoad, onSave, onRefresh,
     setEditing(false);
   };
 
+  // react-markdown 无内部 memo，每次渲染都全量重新解析+高亮；
+  // memo 住正文子树，让本地状态切换（编辑/历史折叠）不触发整篇重渲染
+  const markdownBody = useMemo(() => {
+    if (!doc) return null;
+    const stripped = doc.content.startsWith('---')
+      ? doc.content.replace(/^---[\s\S]*?\n---\n?/, '')
+      : doc.content;
+    return (
+      <div className="prose prose-sm max-w-none prose-headings:font-semibold prose-code:text-amber-700 prose-code:bg-amber-50 prose-code:px-1 prose-code:rounded prose-pre:bg-gray-50 prose-pre:border prose-pre:border-gray-200">
+        <ReactMarkdown
+          remarkPlugins={[remarkGfm]}
+          rehypePlugins={[rehypeHighlight]}
+          components={{
+            a: ({ href, children, ...rest }) => {
+              const h = href ?? '';
+              if (h && !isExternalHref(h) && /\.md$/i.test(h.replace(/[?#].*$/, ''))) {
+                const target = resolveWikiPath(path, h);
+                return (
+                  <a
+                    href={h}
+                    onClick={e => { e.preventDefault(); onNavigate(target); }}
+                    {...rest}
+                  >
+                    {children}
+                  </a>
+                );
+              }
+              if (isExternalHref(h)) {
+                return <a href={h} target="_blank" rel="noreferrer" {...rest}>{children}</a>;
+              }
+              return <a href={h} {...rest}>{children}</a>;
+            },
+          }}
+        >
+          {stripped}
+        </ReactMarkdown>
+      </div>
+    );
+  }, [doc, path, onNavigate]);
+
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
       {/* Toolbar */}
@@ -152,71 +198,45 @@ export function WikiDoc({ path, doc, loading, onBack, onLoad, onSave, onRefresh,
       {!loading && doc && !editing && (
         <div className="flex-1 overflow-y-auto">
           <div className="max-w-3xl mx-auto px-8 py-6">
-            {/* Meta */}
-            {(doc.frontmatter.tags.length > 0 || doc.frontmatter.updated || doc.frontmatter.type) && (
-              <div className="flex items-center gap-3 mb-2 flex-wrap">
-                {doc.frontmatter.type && (
-                  <span className="px-2 py-0.5 bg-gray-100 text-gray-500 text-xs rounded-full font-mono">{doc.frontmatter.type}</span>
+            {/* Meta：底部间距由外层统一承担，内部元素不各自写 mb-* */}
+            {(doc.frontmatter.type || doc.frontmatter.tags.length > 0 || doc.frontmatter.updated ||
+              doc.frontmatter.description || doc.frontmatter.resource) && (
+              <div className="mb-6 space-y-2">
+                {(doc.frontmatter.type || doc.frontmatter.tags.length > 0 || doc.frontmatter.updated) && (
+                  <div className="flex items-center gap-3 flex-wrap">
+                    {doc.frontmatter.type && (
+                      <span className="px-2 py-0.5 bg-gray-100 text-gray-500 text-xs rounded-full font-mono">{doc.frontmatter.type}</span>
+                    )}
+                    <div className="flex gap-1.5 flex-wrap">
+                      {doc.frontmatter.tags.map(t => <TagBadge key={t} tag={t} />)}
+                    </div>
+                    {doc.frontmatter.updated && (
+                      <span className="text-xs text-gray-400 ml-auto">{relativeTime(doc.frontmatter.updated)}</span>
+                    )}
+                  </div>
                 )}
-                <div className="flex gap-1.5 flex-wrap">
-                  {doc.frontmatter.tags.map(t => <TagBadge key={t} tag={t} />)}
-                </div>
-                {doc.frontmatter.updated && (
-                  <span className="text-xs text-gray-400 ml-auto">{relativeTime(doc.frontmatter.updated)}</span>
+                {doc.frontmatter.description && (
+                  <p className="text-sm text-gray-500">{doc.frontmatter.description}</p>
+                )}
+                {doc.frontmatter.resource && (
+                  isExternalHref(doc.frontmatter.resource) ? (
+                    <a
+                      href={doc.frontmatter.resource}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1 text-xs text-amber-600 hover:text-amber-700"
+                    >
+                      关联资源 ↗
+                    </a>
+                  ) : (
+                    <p className="text-xs text-gray-400 font-mono">关联资源: {doc.frontmatter.resource}</p>
+                  )
                 )}
               </div>
             )}
-            {doc.frontmatter.description && (
-              <p className="text-sm text-gray-500 mb-2">{doc.frontmatter.description}</p>
-            )}
-            {doc.frontmatter.resource && (
-              isExternalHref(doc.frontmatter.resource) ? (
-                <a
-                  href={doc.frontmatter.resource}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center gap-1 text-xs text-amber-600 hover:text-amber-700 mb-6"
-                >
-                  关联资源 ↗
-                </a>
-              ) : (
-                <p className="text-xs text-gray-400 font-mono mb-6">关联资源: {doc.frontmatter.resource}</p>
-              )
-            )}
 
             {/* Markdown content */}
-            <div className="prose prose-sm max-w-none prose-headings:font-semibold prose-code:text-amber-700 prose-code:bg-amber-50 prose-code:px-1 prose-code:rounded prose-pre:bg-gray-50 prose-pre:border prose-pre:border-gray-200">
-              <ReactMarkdown
-                remarkPlugins={[remarkGfm]}
-                rehypePlugins={[rehypeHighlight]}
-                components={{
-                  a: ({ href, children, ...rest }) => {
-                    const h = href ?? '';
-                    if (h && !isExternalHref(h) && /\.md$/i.test(h.replace(/[?#].*$/, ''))) {
-                      const target = resolveWikiPath(path, h);
-                      return (
-                        <a
-                          href={h}
-                          onClick={e => { e.preventDefault(); onNavigate(target); }}
-                          {...rest}
-                        >
-                          {children}
-                        </a>
-                      );
-                    }
-                    if (isExternalHref(h)) {
-                      return <a href={h} target="_blank" rel="noreferrer" {...rest}>{children}</a>;
-                    }
-                    return <a href={h} {...rest}>{children}</a>;
-                  },
-                }}
-              >
-                {/* Strip frontmatter from display */}
-                {doc.content.startsWith('---')
-                  ? doc.content.replace(/^---[\s\S]*?\n---\n?/, '')
-                  : doc.content}
-              </ReactMarkdown>
-            </div>
+            {markdownBody}
 
             {/* History */}
             {doc.gitLog.length > 0 && (

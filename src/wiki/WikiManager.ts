@@ -14,6 +14,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { exec, execFile } from 'child_process';
 import { promisify } from 'util';
+import { parse as parseYaml, Document as YamlDocument } from 'yaml';
 
 const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
@@ -79,6 +80,9 @@ export interface TagEntry {
 // ── 常量 ─────────────────────────────────────────────────────────
 
 const EXCLUDED = new Set(['.git', 'node_modules', '.DS_Store']);
+
+/** frontmatter 中由 WikiManager 管理的字段；其余字段原样保留（round-trip） */
+const MANAGED_FM_KEYS = new Set(['created', 'updated', 'tags', 'source', 'type', 'title', 'description', 'resource']);
 
 // ── WikiManager ──────────────────────────────────────────────────
 
@@ -159,19 +163,28 @@ export class WikiManager {
     const isNew = !fs.existsSync(absPath);
     const now = new Date().toISOString();
 
-    const { fm: existingFm } = this.parseFrontmatter(content);
+    // 元数据基准：新 content 自带 frontmatter 时以它为准（编辑路径）；
+    // 否则回落到磁盘旧文件（CLI 纯正文重存路径），避免更新时丢已有元数据
+    const parsed = this.parseFrontmatter(content);
+    let base = parsed;
+    if (!parsed.hasFm && !isNew) {
+      try {
+        base = this.parseFrontmatter(fs.readFileSync(absPath, 'utf-8'));
+      } catch { /* 磁盘读取失败时退回 content 解析结果 */ }
+    }
+
     const fm: Frontmatter = {
-      created: isNew ? now : (existingFm.created || now),
+      created: isNew ? now : (base.fm.created || now),
       updated: now,
-      tags: opts?.tags ?? existingFm.tags ?? [],
-      source: opts?.source ?? existingFm.source ?? 'manual',
-      type: opts?.type ?? existingFm.type,
-      title: opts?.title ?? existingFm.title,
-      description: opts?.description ?? existingFm.description,
-      resource: opts?.resource ?? existingFm.resource,
+      tags: opts?.tags ?? base.fm.tags ?? [],
+      source: opts?.source ?? base.fm.source ?? 'manual',
+      type: opts?.type ?? base.fm.type,
+      title: opts?.title ?? base.fm.title,
+      description: opts?.description ?? base.fm.description,
+      resource: opts?.resource ?? base.fm.resource,
     };
 
-    const finalContent = this.injectFrontmatter(content, fm);
+    const finalContent = this.renderDoc(fm, base.extra, parsed.body);
     fs.mkdirSync(path.dirname(absPath), { recursive: true });
     fs.writeFileSync(absPath, finalContent, 'utf-8');
 
@@ -432,75 +445,85 @@ export class WikiManager {
     }
   }
 
-  /** 简单手写 YAML frontmatter 解析（避免引入额外依赖）。restLines 保留未识别的原始行，写回时原样保留 */
-  private parseFrontmatter(content: string): { fm: Frontmatter; body: string; restLines: string[] } {
-    const defaultFm: Frontmatter = { created: '', updated: '', tags: [], source: 'manual' };
-    if (!content.startsWith('---')) return { fm: defaultFm, body: content, restLines: [] };
+  /**
+   * frontmatter 解析（yaml 库，与 workflow/editDef 同源）。
+   * - extra 保留所有非管理字段（含嵌套结构），写回时原样保留
+   * - YAML 非法时按"无 frontmatter"处理（整块并入 body），避免回写时覆盖丢数据
+   */
+  private parseFrontmatter(content: string): {
+    fm: Frontmatter;
+    body: string;
+    extra: Record<string, unknown>;
+    hasFm: boolean;
+  } {
+    const noFm = () => ({
+      fm: { created: '', updated: '', tags: [], source: 'manual' } as Frontmatter,
+      body: content,
+      extra: {},
+      hasFm: false,
+    });
+    if (!content.startsWith('---')) return noFm();
 
     const end = content.indexOf('\n---', 3);
-    if (end === -1) return { fm: defaultFm, body: content, restLines: [] };
+    if (end === -1) return noFm();
 
-    const yamlBlock = content.slice(4, end);
-    const body = content.slice(end + 4).replace(/^\n/, '');
-    const fm: Frontmatter = { ...defaultFm };
-    const restLines: string[] = [];
-
-    const STRING_KEYS = new Set(['created', 'updated', 'source', 'type', 'title', 'description', 'resource']);
-
-    for (const line of yamlBlock.split('\n')) {
-      const colon = line.indexOf(':');
-      const key = colon === -1 ? '' : line.slice(0, colon).trim();
-
-      if (STRING_KEYS.has(key)) {
-        const val = this.unquote(line.slice(colon + 1).trim());
-        (fm as unknown as Record<string, string>)[key] = val;
-      } else if (key === 'tags') {
-        const tagStr = line.slice(colon + 1).trim().replace(/^\[/, '').replace(/\]$/, '');
-        fm.tags = tagStr.split(',').map(t => t.trim()).filter(Boolean);
-      } else if (line.trim()) {
-        restLines.push(line);
-      }
+    let data: Record<string, unknown>;
+    try {
+      const parsed: unknown = parseYaml(content.slice(4, end));
+      if (parsed === null || parsed === undefined) data = {};
+      else if (typeof parsed !== 'object' || Array.isArray(parsed)) return noFm();
+      else data = parsed as Record<string, unknown>;
+    } catch {
+      return noFm();
     }
 
-    return { fm, body, restLines };
+    const body = content.slice(end + 4).replace(/^\r?\n/, '');
+    const str = (v: unknown): string => (v === null || v === undefined ? '' : String(v));
+    const strOpt = (v: unknown): string | undefined => {
+      const s = str(v);
+      return s ? s : undefined;
+    };
+
+    const fm: Frontmatter = {
+      created: str(data.created),
+      updated: str(data.updated),
+      tags: Array.isArray(data.tags) ? data.tags.map(v => String(v)).filter(Boolean) : [],
+      source: str(data.source) || 'manual',
+      type: strOpt(data.type),
+      title: strOpt(data.title),
+      description: strOpt(data.description),
+      resource: strOpt(data.resource),
+    };
+
+    const extra: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(data)) {
+      if (!MANAGED_FM_KEYS.has(k)) extra[k] = v;
+    }
+
+    return { fm, body, extra, hasFm: true };
   }
 
-  private injectFrontmatter(content: string, fm: Partial<Frontmatter>): string {
-    const { body, restLines } = this.parseFrontmatter(content);
-    const tags = fm.tags?.length ? `[${fm.tags.join(', ')}]` : '[]';
-    const lines = [
-      '---',
-      `created: ${fm.created ?? ''}`,
-      `updated: ${fm.updated ?? ''}`,
-      `tags: ${tags}`,
-      `source: ${fm.source ?? 'manual'}`,
-    ];
+  /** 组装最终文档：管理字段 + 保留的未知字段 + 正文 */
+  private renderDoc(fm: Partial<Frontmatter>, extra: Record<string, unknown>, body: string): string {
+    const data: Record<string, unknown> = {
+      created: fm.created ?? '',
+      updated: fm.updated ?? '',
+      tags: fm.tags ?? [],
+      source: fm.source ?? 'manual',
+    };
     for (const key of ['type', 'title', 'description', 'resource'] as const) {
-      const val = fm[key];
-      if (val) lines.push(`${key}: ${this.quoteIfNeeded(val)}`);
+      if (fm[key]) data[key] = fm[key];
     }
-    lines.push(...restLines);
-    lines.push('---', '');
-    return lines.join('\n') + body;
-  }
+    for (const [k, v] of Object.entries(extra)) {
+      if (!MANAGED_FM_KEYS.has(k)) data[k] = v;
+    }
 
-  /** 去掉包裹字符串的成对引号并反转义，与 quoteIfNeeded 的转义严格对称（兼容外部工具写入的 YAML） */
-  private unquote(val: string): string {
-    if (val.length >= 2 && val.startsWith('"') && val.endsWith('"')) {
-      return val.slice(1, -1).replace(/\\(["\\])/g, '$1');
+    const doc = new YamlDocument(data);
+    const tagsNode = doc.get('tags');
+    if (tagsNode && typeof tagsNode === 'object') {
+      (tagsNode as { flow?: boolean }).flow = true; // tags 保持 [a, b] 行内风格
     }
-    if (val.length >= 2 && val.startsWith("'") && val.endsWith("'")) {
-      return val.slice(1, -1).replace(/''/g, "'");
-    }
-    return val;
-  }
-
-  /** 值含 YAML 敏感字符时加引号，保证标准 YAML 解析器可读（OKF 互操作） */
-  private quoteIfNeeded(val: string): string {
-    if (/[:#]/.test(val) || /^[\s'"\[\]{}>|&*!%@`-]/.test(val)) {
-      return `"${val.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
-    }
-    return val;
+    return `---\n${doc.toString({ flowCollectionPadding: false })}---\n\n${body}`;
   }
 
   private extractTitle(content: string, relPath: string): string {
