@@ -444,6 +444,14 @@ async function runCLI(): Promise<void> {
     })
 
   wiki
+    .command('backlinks <path>')
+    .description('List documents whose body links to the given wiki-relative path')
+    .action(async (relPath: string) => {
+      const { cmdWikiBacklinks } = await import('./cli/commands/wiki.js')
+      await cmdWikiBacklinks(relPath)
+    })
+
+  wiki
     .command('stats')
     .description('Show wiki statistics')
     .action(async () => {

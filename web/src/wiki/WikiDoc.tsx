@@ -238,6 +238,25 @@ export function WikiDoc({ path, doc, loading, onBack, onLoad, onSave, onRefresh,
             {/* Markdown content */}
             {markdownBody}
 
+            {/* Backlinks */}
+            {(doc.backlinks?.length ?? 0) > 0 && (
+              <div className="mt-8 border-t border-gray-100 pt-4">
+                <div className="text-xs text-gray-400 mb-2">被引用 ({doc.backlinks.length})</div>
+                <div className="space-y-1">
+                  {doc.backlinks.map(b => (
+                    <button
+                      key={b.path}
+                      onClick={() => onNavigate(b.path)}
+                      className="flex items-center gap-2 text-xs text-amber-600 hover:text-amber-700 max-w-full"
+                    >
+                      <span className="truncate">{b.title}</span>
+                      <span className="text-gray-300 font-mono text-[10px] truncate flex-shrink-0">{b.path}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* History */}
             {doc.gitLog.length > 0 && (
               <div className="mt-8 border-t border-gray-100 pt-4">

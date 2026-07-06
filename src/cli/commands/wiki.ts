@@ -6,7 +6,8 @@
  * 用法：
  *   semaclaw wiki tree                                — 列出目录结构
  *   semaclaw wiki save --path <rel> [--tags <t1,t2>] — 从 stdin 保存文档
- *   semaclaw wiki search <query>                      — 标题/tags 搜索
+ *   semaclaw wiki search <query>                      — 文件名/标题/tags/描述/正文搜索
+ *   semaclaw wiki backlinks <path>                    — 列出链接到该文档的文档
  *   semaclaw wiki mkdir <path>                        — 新建目录
  *   semaclaw wiki stats                               — 统计概览
  */
@@ -100,8 +101,30 @@ export async function cmdWikiSearch(
 
   const wikiDir = getWikiDir();
   for (const r of results) {
+    const typeStr = r.type ? `  [type: ${r.type}]` : '';
     const tagStr = r.tags.length ? `  [${r.tags.join(', ')}]` : '';
-    console.log(`${path.join(wikiDir, r.path)}  —  ${r.title}${tagStr}`);
+    console.log(`${path.join(wikiDir, r.path)}  —  ${r.title}${typeStr}${tagStr}`);
+    if (r.description) console.log(`    ${r.description}`);
+  }
+}
+
+// ── semaclaw wiki backlinks ───────────────────────────────────────
+
+export async function cmdWikiBacklinks(relPath: string): Promise<void> {
+  if (!relPath) {
+    console.error('Error: path argument is required');
+    process.exit(1);
+  }
+  const wm = getWiki();
+  await wm.ensureInit();
+  const backlinks = wm.getBacklinks(relPath);
+  if (backlinks.length === 0) {
+    console.log('No backlinks found.');
+    return;
+  }
+  const wikiDir = getWikiDir();
+  for (const b of backlinks) {
+    console.log(`${path.join(wikiDir, b.path)}  —  ${b.title}`);
   }
 }
 

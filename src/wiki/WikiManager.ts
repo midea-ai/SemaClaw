@@ -47,6 +47,13 @@ export interface WikiDoc {
   content: string;
   frontmatter: Frontmatter;
   gitLog: GitCommit[];
+  /** 正文中链接到本文档的其他文档（反链） */
+  backlinks: BacklinkEntry[];
+}
+
+export interface BacklinkEntry {
+  path: string;
+  title: string;
 }
 
 export interface SearchResult {
@@ -83,6 +90,9 @@ const EXCLUDED = new Set(['.git', 'node_modules', '.DS_Store']);
 
 /** frontmatter 中由 WikiManager 管理的字段；其余字段原样保留（round-trip） */
 const MANAGED_FM_KEYS = new Set(['created', 'updated', 'tags', 'source', 'type', 'title', 'description', 'resource']);
+
+/** 每目录自动维护的纯索引文件：不进 tree/search/stats，不接受直接写入 */
+const INDEX_FILE = 'index.md';
 
 // ── WikiManager ──────────────────────────────────────────────────
 
@@ -121,6 +131,8 @@ export class WikiManager {
     ].join('\n');
     fs.writeFileSync(path.join(this.wikiDir, 'README.md'), readme, 'utf-8');
 
+    this.refreshIndexChain('inbox'); // 生成 inbox/ 与根目录的 index.md
+
     await this.git('add -A');
     await this.git('commit -m "wiki: initial commit"');
 
@@ -132,13 +144,14 @@ export class WikiManager {
     return this.scanDir(this.wikiDir, '');
   }
 
-  /** 读取文档内容 + frontmatter + git 历史 */
+  /** 读取文档内容 + frontmatter + git 历史 + 反链 */
   async readFile(relPath: string): Promise<WikiDoc> {
     const absPath = this.safePath(relPath);
     const content = fs.readFileSync(absPath, 'utf-8');
     const { fm } = this.parseFrontmatter(content);
     const gitLog = await this.getHistory(relPath, 10);
-    return { path: relPath, content, frontmatter: fm, gitLog };
+    const backlinks = this.getBacklinks(relPath);
+    return { path: relPath, content, frontmatter: fm, gitLog, backlinks };
   }
 
   /**
@@ -159,6 +172,9 @@ export class WikiManager {
       resource?: string;
     },
   ): Promise<void> {
+    if (path.basename(relPath) === INDEX_FILE) {
+      throw new Error('index.md is auto-generated and cannot be written directly');
+    }
     const absPath = this.safePath(relPath);
     const isNew = !fs.existsSync(absPath);
     const now = new Date().toISOString();
@@ -188,23 +204,26 @@ export class WikiManager {
     fs.mkdirSync(path.dirname(absPath), { recursive: true });
     fs.writeFileSync(absPath, finalContent, 'utf-8');
 
+    const changedIndexes = this.refreshIndexChain(this.parentDirOf(relPath));
+
     const action = isNew ? 'add' : 'edit';
     const commitMsg = opts?.commitMsg ?? `wiki: ${action} ${relPath}`;
-    await this.gitCommit(commitMsg, [relPath]);
+    await this.gitCommit(commitMsg, [relPath, ...changedIndexes]);
   }
 
   /**
-   * 标题搜索：遍历所有 .md 文件，按文件名 / H1 标题 / tags 匹配
+   * 搜索：遍历所有 .md 文件，按文件名 / H1 标题 / tags / description / 正文匹配。
+   * 结果按命中位置分级（文件名或标题 > tags > description > 正文），同级按 updated 倒序。
    * query 为空时返回所有文档（用于 tags 过滤）
    */
   async search(query: string, opts?: { tags?: string[]; limit?: number }): Promise<SearchResult[]> {
     const limit = opts?.limit ?? 20;
     const queryLower = query.toLowerCase();
     const filterTags = opts?.tags ?? [];
-    const results: SearchResult[] = [];
+    const ranked: { result: SearchResult; tier: number }[] = [];
 
     this.walkMd(this.wikiDir, '', (relPath, content) => {
-      const { fm } = this.parseFrontmatter(content);
+      const { fm, body } = this.parseFrontmatter(content);
       const title = this.extractTitle(content, relPath);
       const titleLower = title.toLowerCase();
       const filenameLower = path.basename(relPath, '.md').toLowerCase();
@@ -214,27 +233,31 @@ export class WikiManager {
         return;
       }
 
-      const matches =
-        !query ||
-        filenameLower.includes(queryLower) ||
-        titleLower.includes(queryLower) ||
-        tagsLower.some(t => t.includes(queryLower)) ||
-        (fm.description ?? '').toLowerCase().includes(queryLower);
+      let tier: number;
+      if (!query) tier = 0;
+      else if (filenameLower.includes(queryLower) || titleLower.includes(queryLower)) tier = 0;
+      else if (tagsLower.some(t => t.includes(queryLower))) tier = 1;
+      else if ((fm.description ?? '').toLowerCase().includes(queryLower)) tier = 2;
+      else if (body.toLowerCase().includes(queryLower)) tier = 3;
+      else return;
 
-      if (matches) {
-        results.push({
+      ranked.push({
+        tier,
+        result: {
           path: relPath,
           title: fm.title || title,
           tags: fm.tags ?? [],
           updated: fm.updated ?? '',
           type: fm.type,
           description: fm.description,
-        });
-      }
+        },
+      });
     });
 
-    results.sort((a, b) => (b.updated > a.updated ? 1 : -1));
-    return results.slice(0, limit);
+    ranked.sort((a, b) =>
+      a.tier !== b.tier ? a.tier - b.tier : (b.result.updated > a.result.updated ? 1 : -1),
+    );
+    return ranked.slice(0, limit).map(r => r.result);
   }
 
   /** 统计数据：分类文件数 + 标签分布 + 最近修改 */
@@ -315,23 +338,27 @@ export class WikiManager {
       .sort((a, b) => b.count - a.count);
   }
 
-  /** 创建目录（含 .gitkeep 使 git 可追踪） */
+  /** 创建目录（含 .gitkeep 使 git 可追踪），并生成/刷新本目录及祖先的 index.md */
   async mkdir(relPath: string): Promise<void> {
     const absPath = this.safePath(relPath);
     fs.mkdirSync(absPath, { recursive: true });
     const keepFile = path.join(absPath, '.gitkeep');
-    if (!fs.existsSync(keepFile)) {
-      fs.writeFileSync(keepFile, '', 'utf-8');
-      await this.gitCommit(`wiki: mkdir ${relPath}`, [`${relPath}/.gitkeep`]);
+    const isNew = !fs.existsSync(keepFile);
+    if (isNew) fs.writeFileSync(keepFile, '', 'utf-8');
+    const changedIndexes = this.refreshIndexChain(relPath);
+    if (isNew || changedIndexes.length > 0) {
+      const files = [...(isNew ? [`${relPath}/.gitkeep`] : []), ...changedIndexes];
+      await this.gitCommit(`wiki: mkdir ${relPath}`, files);
     }
   }
 
-  /** 删除空目录（有文件时报错） */
+  /** 删除空目录（有文件时报错；.gitkeep 与自动生成的 index.md 不算内容） */
   async deleteEmptyDir(relPath: string): Promise<void> {
     const absPath = this.safePath(relPath);
-    const entries = fs.readdirSync(absPath).filter(e => e !== '.gitkeep');
+    const entries = fs.readdirSync(absPath).filter(e => e !== '.gitkeep' && e !== INDEX_FILE);
     if (entries.length > 0) throw new Error(`Directory not empty: ${relPath}`);
     fs.rmSync(absPath, { recursive: true, force: true });
+    this.refreshIndexChain(this.parentDirOf(relPath));
     await this.gitCommit(`wiki: rmdir ${relPath}`);
   }
 
@@ -370,7 +397,7 @@ export class WikiManager {
       if (entry.isDirectory()) {
         const children = await this.scanDir(path.join(absDir, entry.name), relPath);
         nodes.push({ name: entry.name, path: relPath, type: 'dir', children });
-      } else if (entry.isFile() && entry.name.endsWith('.md')) {
+      } else if (entry.isFile() && entry.name.endsWith('.md') && entry.name !== INDEX_FILE) {
         try {
           const content = fs.readFileSync(path.join(absDir, entry.name), 'utf-8');
           const { fm } = this.parseFrontmatter(content);
@@ -404,7 +431,7 @@ export class WikiManager {
       const relPath = relBase ? `${relBase}/${entry.name}` : entry.name;
       if (entry.isDirectory()) {
         this.walkMd(path.join(dir, entry.name), relPath, cb);
-      } else if (entry.isFile() && entry.name.endsWith('.md')) {
+      } else if (entry.isFile() && entry.name.endsWith('.md') && entry.name !== INDEX_FILE) {
         try {
           const content = fs.readFileSync(path.join(dir, entry.name), 'utf-8');
           cb(relPath, content);
@@ -443,6 +470,108 @@ export class WikiManager {
         console.warn('[WikiManager] git commit warning:', msg.slice(0, 200));
       }
     }
+  }
+
+  /** relPath 所在目录（wiki 相对路径，根目录为 ''） */
+  private parentDirOf(relPath: string): string {
+    return relPath.includes('/') ? relPath.slice(0, relPath.lastIndexOf('/')) : '';
+  }
+
+  /**
+   * 重新生成 dirRel 及其所有祖先目录（含根）的 index.md。
+   * 内容无变化时不写盘。返回实际变更的 index.md 相对路径列表（供并入 git commit）。
+   */
+  private refreshIndexChain(dirRel: string): string[] {
+    const changed: string[] = [];
+    let cur = dirRel;
+    for (;;) {
+      const idxRel = cur ? `${cur}/${INDEX_FILE}` : INDEX_FILE;
+      const absIdx = this.safePath(idxRel);
+      if (fs.existsSync(path.dirname(absIdx))) {
+        const content = this.renderIndex(cur);
+        let prev = '';
+        try { prev = fs.readFileSync(absIdx, 'utf-8'); } catch { /* 尚不存在 */ }
+        if (content !== prev) {
+          fs.writeFileSync(absIdx, content, 'utf-8');
+          changed.push(idxRel);
+        }
+      }
+      if (!cur) break;
+      cur = this.parentDirOf(cur);
+    }
+    return changed;
+  }
+
+  /** 生成单个目录的纯索引内容：子目录 + 文档（标题取 H1） */
+  private renderIndex(dirRel: string): string {
+    const absDir = dirRel ? this.safePath(dirRel) : this.wikiDir;
+    let entries: fs.Dirent[] = [];
+    try {
+      entries = fs.readdirSync(absDir, { withFileTypes: true });
+    } catch { /* 目录不可读则生成空索引 */ }
+
+    const dirs: string[] = [];
+    const files: { name: string; title: string }[] = [];
+    for (const entry of entries) {
+      if (EXCLUDED.has(entry.name) || entry.name.startsWith('.')) continue;
+      if (entry.isDirectory()) {
+        dirs.push(entry.name);
+      } else if (entry.isFile() && entry.name.endsWith('.md') && entry.name !== INDEX_FILE) {
+        let title = entry.name.replace(/\.md$/, '');
+        try {
+          const content = fs.readFileSync(path.join(absDir, entry.name), 'utf-8');
+          title = this.extractTitle(content, entry.name);
+        } catch { /* 读取失败则用文件名 */ }
+        files.push({ name: entry.name, title });
+      }
+    }
+    dirs.sort((a, b) => a.localeCompare(b));
+    files.sort((a, b) => a.name.localeCompare(b.name));
+
+    const lines = [
+      '<!-- auto-generated by semaclaw wiki (directory index) — do not edit -->',
+      `# ${dirRel || '(wiki root)'}`,
+      '',
+    ];
+    for (const d of dirs) lines.push(`- [${d}/](./${this.escapeLinkTarget(d)}/${INDEX_FILE})`);
+    for (const f of files) lines.push(`- [${f.title}](./${this.escapeLinkTarget(f.name)})`);
+    lines.push('');
+    return lines.join('\n');
+  }
+
+  /** 转义会破坏 Markdown 链接语法的文件名字符（空格、括号、# 等） */
+  private escapeLinkTarget(name: string): string {
+    return name.replace(/[% ()#?]/g, ch => encodeURIComponent(ch));
+  }
+
+  /** 反链扫描：找出正文中链接到 target 的所有文档 */
+  getBacklinks(target: string): BacklinkEntry[] {
+    const targetNorm = target.replace(/^\/+/, '');
+    const results: BacklinkEntry[] = [];
+
+    this.walkMd(this.wikiDir, '', (relPath, content) => {
+      if (relPath === targetNorm) return;
+      const { body } = this.parseFrontmatter(content);
+      const dir = this.parentDirOf(relPath);
+      const linkRe = /\[[^\]]*\]\(([^)\s]+)(?:\s[^)]*)?\)/g;
+      let m: RegExpExecArray | null;
+      while ((m = linkRe.exec(body))) {
+        let href = m[1];
+        if (/^[a-z][a-z0-9+.-]*:/i.test(href) || href.startsWith('//')) continue;
+        href = href.replace(/[?#].*$/, '');
+        if (!/\.md$/i.test(href)) continue;
+        try { href = decodeURIComponent(href); } catch { /* 非法转义按原样比较 */ }
+        const resolved = href.startsWith('/')
+          ? path.posix.normalize(href.slice(1))
+          : path.posix.normalize(path.posix.join(dir, href));
+        if (resolved === targetNorm) {
+          results.push({ path: relPath, title: this.extractTitle(content, relPath) });
+          break;
+        }
+      }
+    });
+
+    return results;
   }
 
   /**

@@ -27,6 +27,8 @@ export interface WikiDoc {
   content: string;
   frontmatter: Frontmatter;
   gitLog: GitCommit[];
+  /** 正文中链接到本文档的其他文档（反链） */
+  backlinks: { path: string; title: string }[];
 }
 
 export interface SearchResult {
