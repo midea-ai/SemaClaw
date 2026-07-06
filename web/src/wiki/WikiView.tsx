@@ -20,8 +20,30 @@ interface Props {
 export default function WikiView({ onGoHome }: Props) {
   const [innerView, setInnerView] = useState<InnerView>('home');
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [syncMsg, setSyncMsg] = useState<string | null>(null);
 
   const wiki = useWiki();
+
+  const handleSync = useCallback(async () => {
+    if (syncing) return;
+    setSyncing(true);
+    setSyncMsg(null);
+    try {
+      const r = await wiki.sync();
+      setSyncMsg(
+        r.indexesUpdated === 0 && !r.committed
+          ? '已是最新'
+          : `已同步:${r.indexesUpdated} 个索引更新${r.committed ? ',外部改动已提交' : ''}`,
+      );
+      wiki.fetchTree();
+      setTimeout(() => setSyncMsg(null), 4000);
+    } catch {
+      // 错误已由 useWiki 的 error toast 呈现
+    } finally {
+      setSyncing(false);
+    }
+  }, [syncing, wiki]);
 
   useEffect(() => {
     wiki.fetchTree();
@@ -88,6 +110,28 @@ export default function WikiView({ onGoHome }: Props) {
             <span className="text-xs text-gray-400 truncate max-w-xs">{viewLabel[innerView]}</span>
           </>
         )}
+
+        {/* Sync：重建索引 + 收编外部改动（人手放入的文件） */}
+        <div className="ml-auto flex items-center gap-2">
+          {syncMsg && <span className="text-xs text-gray-400">{syncMsg}</span>}
+          <button
+            onClick={handleSync}
+            disabled={syncing}
+            title="同步:重建目录索引并收编在 semaclaw 之外添加/修改的文件"
+            className="flex items-center gap-1.5 px-2.5 py-1 text-xs text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors disabled:opacity-50"
+          >
+            <svg
+              className={`w-3.5 h-3.5 ${syncing ? 'animate-spin' : ''}`}
+              fill="none"
+              viewBox="0 0 24 24"
+              strokeWidth={1.8}
+              stroke="currentColor"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
+            </svg>
+            {syncing ? '同步中...' : '同步'}
+          </button>
+        </div>
       </header>
 
       {/* Body */}

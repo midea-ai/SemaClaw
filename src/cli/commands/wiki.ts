@@ -8,6 +8,7 @@
  *   semaclaw wiki save --path <rel> [--tags <t1,t2>] — 从 stdin 保存文档
  *   semaclaw wiki search <query>                      — 文件名/标题/tags/描述/正文搜索
  *   semaclaw wiki backlinks <path>                    — 列出链接到该文档的文档
+ *   semaclaw wiki sync                                — 重建全部索引并收编外部改动
  *   semaclaw wiki mkdir <path>                        — 新建目录
  *   semaclaw wiki stats                               — 统计概览
  */
@@ -139,6 +140,18 @@ export async function cmdWikiMkdir(dirPath: string): Promise<void> {
   await wm.ensureInit();
   await wm.mkdir(dirPath);
   console.log(`Created: ${dirPath}`);
+}
+
+// ── semaclaw wiki sync ────────────────────────────────────────────
+
+export async function cmdWikiSync(): Promise<void> {
+  const wm = getWiki();
+  const { indexesUpdated, committed } = await wm.sync();
+  if (indexesUpdated === 0 && !committed) {
+    console.log('Already up to date.');
+  } else {
+    console.log(`Sync complete: ${indexesUpdated} index(es) updated${committed ? ', external changes committed' : ''}.`);
+  }
 }
 
 // ── semaclaw wiki stats ───────────────────────────────────────────

@@ -452,6 +452,14 @@ async function runCLI(): Promise<void> {
     })
 
   wiki
+    .command('sync')
+    .description('Rebuild all directory indexes and commit external changes (files added/edited outside semaclaw)')
+    .action(async () => {
+      const { cmdWikiSync } = await import('./cli/commands/wiki.js')
+      await cmdWikiSync()
+    })
+
+  wiki
     .command('stats')
     .description('Show wiki statistics')
     .action(async () => {

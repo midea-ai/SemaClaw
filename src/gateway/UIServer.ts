@@ -1137,6 +1137,44 @@ export class UIServer {
         return;
       }
 
+      // GET /api/wiki/raw?path=... — 附件原文件（html/图片/pdf 等），只读
+      if (urlPath === '/api/wiki/raw' && req.method === 'GET') {
+        const p = qs.get('path');
+        if (!p) { err('Missing path'); return; }
+        const rawTypes: Record<string, string> = {
+          '.html': 'text/html; charset=utf-8',
+          '.htm': 'text/html; charset=utf-8',
+          '.svg': 'image/svg+xml',
+          '.png': 'image/png',
+          '.jpg': 'image/jpeg',
+          '.jpeg': 'image/jpeg',
+          '.gif': 'image/gif',
+          '.webp': 'image/webp',
+          '.pdf': 'application/pdf',
+          '.md': 'text/plain; charset=utf-8',
+          '.txt': 'text/plain; charset=utf-8',
+          '.json': 'application/json',
+          '.csv': 'text/csv; charset=utf-8',
+        };
+        const ext = p.slice(p.lastIndexOf('.')).toLowerCase();
+        const mime = rawTypes[ext];
+        if (!mime) { err(`Unsupported file type: ${ext}`); return; }
+        let data: Buffer;
+        try {
+          data = wm.readRawFile(p);
+        } catch {
+          err('Not found', 404);
+          return;
+        }
+        const headers: Record<string, string> = { 'Content-Type': mime };
+        if (ext === '.html' || ext === '.htm' || ext === '.svg') {
+          // 沙箱：脚本可运行，但页面处于 opaque origin，无法带凭据访问同源 API
+          headers['Content-Security-Policy'] = 'sandbox allow-scripts';
+        }
+        res.writeHead(200, headers).end(data);
+        return;
+      }
+
       // GET /api/wiki/search?q=...&tags=...&limit=...
       if (urlPath === '/api/wiki/search' && req.method === 'GET') {
         const q = qs.get('q') ?? '';
@@ -1169,6 +1207,13 @@ export class UIServer {
       if (urlPath === '/api/wiki/tags' && req.method === 'GET') {
         const tags = await wm.getTags();
         json({ tags });
+        return;
+      }
+
+      // POST /api/wiki/sync — 全量重建索引 + 收编外部改动
+      if (urlPath === '/api/wiki/sync' && req.method === 'POST') {
+        const result = await wm.sync();
+        json(result);
         return;
       }
 

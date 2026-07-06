@@ -32,6 +32,14 @@ function isExternalHref(href: string): boolean {
  * 把文档内的相对链接解析为 wiki 根目录下的规范路径。
  * currentPath 为当前文档的 wiki 相对路径；href 支持 ./、../、以及以 / 开头的 wiki 绝对路径。
  */
+/** 服务端只读附件端点支持的类型（与 UIServer raw 白名单对应，前端可略宽） */
+const RAW_ASSET_RE = /\.(html?|svg|png|jpe?g|gif|webp|pdf|txt|json|csv)$/i;
+
+/** wiki 相对路径 → 只读附件 URL */
+function rawUrl(wikiPath: string): string {
+  return `/api/wiki/raw?path=${encodeURIComponent(wikiPath)}`;
+}
+
 /** 解码单个路径段；非法百分号转义（如 50%discount.md）按原样返回，不让渲染崩溃 */
 function decodeSegment(seg: string): string {
   try {
@@ -122,7 +130,8 @@ export function WikiDoc({ path, doc, loading, onBack, onLoad, onSave, onRefresh,
           components={{
             a: ({ href, children, ...rest }) => {
               const h = href ?? '';
-              if (h && !isExternalHref(h) && /\.md$/i.test(h.replace(/[?#].*$/, ''))) {
+              const stripped = h.replace(/[?#].*$/, '');
+              if (h && !isExternalHref(h) && /\.md$/i.test(stripped)) {
                 const target = resolveWikiPath(path, h);
                 return (
                   <a
@@ -134,10 +143,26 @@ export function WikiDoc({ path, doc, loading, onBack, onLoad, onSave, onRefresh,
                   </a>
                 );
               }
+              if (h && !isExternalHref(h) && RAW_ASSET_RE.test(stripped)) {
+                // wiki 内附件（html/图片/pdf 等）：走只读端点，新标签打开
+                return (
+                  <a href={rawUrl(resolveWikiPath(path, h))} target="_blank" rel="noreferrer" {...rest}>
+                    {children}
+                  </a>
+                );
+              }
               if (isExternalHref(h)) {
                 return <a href={h} target="_blank" rel="noreferrer" {...rest}>{children}</a>;
               }
               return <a href={h} {...rest}>{children}</a>;
+            },
+            img: ({ src, ...rest }) => {
+              const s = typeof src === 'string' ? src : '';
+              if (s && !isExternalHref(s)) {
+                // wiki 内相对图片：改指只读端点，笔记里的本地配图直接内联渲染
+                return <img src={rawUrl(resolveWikiPath(path, s))} {...rest} />;
+              }
+              return <img src={s} {...rest} />;
             },
           }}
         >
@@ -219,18 +244,17 @@ export function WikiDoc({ path, doc, loading, onBack, onLoad, onSave, onRefresh,
                   <p className="text-sm text-gray-500">{doc.frontmatter.description}</p>
                 )}
                 {doc.frontmatter.resource && (
-                  isExternalHref(doc.frontmatter.resource) ? (
-                    <a
-                      href={doc.frontmatter.resource}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="inline-flex items-center gap-1 text-xs text-amber-600 hover:text-amber-700"
-                    >
-                      关联资源 ↗
-                    </a>
-                  ) : (
-                    <p className="text-xs text-gray-400 font-mono">关联资源: {doc.frontmatter.resource}</p>
-                  )
+                  <a
+                    href={isExternalHref(doc.frontmatter.resource)
+                      ? doc.frontmatter.resource
+                      : rawUrl(resolveWikiPath(path, doc.frontmatter.resource))}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1.5 text-xs text-amber-600 hover:text-amber-700"
+                  >
+                    关联资源 ↗
+                    <span className="text-gray-300 font-mono text-[10px] truncate max-w-xs">{doc.frontmatter.resource}</span>
+                  </a>
                 )}
               </div>
             )}

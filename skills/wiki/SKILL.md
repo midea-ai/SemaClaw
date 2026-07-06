@@ -122,6 +122,11 @@ Use this workflow when the user wants to organize, classify, or tidy up document
    ```
    Use the Edit tool to make this change — do not regenerate the file. Unknown frontmatter keys already present are preserved by the wiki; do not remove them.
 
+6. **Sync** — after copying files in directly (outside `semaclaw wiki save`), reconcile indexes and git:
+   ```bash
+   semaclaw wiki sync
+   ```
+
 
 ### When to use `mv` instead of `cp`
 
@@ -134,6 +139,19 @@ Other documents may link to it. Check first, and update those links to the new p
 ```bash
 semaclaw wiki backlinks "old/path.md"
 ```
+
+## Associating Artifacts (HTML reports, images, PDFs)
+
+Non-markdown artifacts (generated HTML reports, diagrams, PDFs) can live in the wiki directory next to their notes. They do not appear in tree/search/index, but are reachable from documents — the wiki UI opens them read-only in a new tab (HTML is sandboxed) and renders images inline.
+
+1. Copy the artifact into the wiki, next to (or near) its note — use the root path printed by `semaclaw wiki tree`:
+   ```bash
+   cp "/path/to/report.html" "<wiki-root>/topic/report.html"
+   ```
+2. Reference it from the note:
+   - As the primary associated resource: save with `--resource "./report.html"` (shown as a clickable link under the doc title), or
+   - Inline in the body: `[分析报告](./report.html)`, `![架构图](./diagram.png)`
+3. Run `semaclaw wiki sync` so the copied artifact gets committed to the wiki's git history.
 
 ## Directory Indexes (auto-maintained)
 

@@ -155,6 +155,10 @@ export function useWiki() {
     }
   }, []);
 
+  const sync = useCallback(async (): Promise<{ indexesUpdated: number; committed: boolean }> => {
+    return apiFetch('/api/wiki/sync', { method: 'POST' });
+  }, []);
+
   const mkdir = useCallback(async (path: string): Promise<void> => {
     await apiFetch('/api/wiki/mkdir', {
       method: 'POST',
@@ -180,6 +184,7 @@ export function useWiki() {
     search,
     fetchStats,
     fetchTags,
+    sync,
     mkdir,
     deleteDir,
     clearDoc: () => setDoc(null),

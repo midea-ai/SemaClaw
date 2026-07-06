@@ -362,6 +362,16 @@ export class WikiManager {
     await this.gitCommit(`wiki: rmdir ${relPath}`);
   }
 
+  /** 读取附件原始字节（html/图片等），供 UI 只读访问。拒绝点文件与排除目录 */
+  readRawFile(relPath: string): Buffer {
+    const segments = relPath.split('/');
+    if (segments.some(seg => seg.startsWith('.') || EXCLUDED.has(seg))) {
+      throw new Error(`Access denied: ${relPath}`);
+    }
+    const absPath = this.safePath(relPath);
+    return fs.readFileSync(absPath);
+  }
+
   /** 返回 wiki 目录树的纯文本表示（CLI / Agent 用） */
   async treeText(): Promise<string> {
     const nodes = await this.getTree();
@@ -477,29 +487,80 @@ export class WikiManager {
     return relPath.includes('/') ? relPath.slice(0, relPath.lastIndexOf('/')) : '';
   }
 
+  /** 重新生成单个目录的 index.md。内容无变化不写盘。返回是否发生变更 */
+  private refreshIndexAt(dirRel: string): boolean {
+    const idxRel = dirRel ? `${dirRel}/${INDEX_FILE}` : INDEX_FILE;
+    const absIdx = this.safePath(idxRel);
+    if (!fs.existsSync(path.dirname(absIdx))) return false;
+    const content = this.renderIndex(dirRel);
+    let prev = '';
+    try { prev = fs.readFileSync(absIdx, 'utf-8'); } catch { /* 尚不存在 */ }
+    if (content === prev) return false;
+    fs.writeFileSync(absIdx, content, 'utf-8');
+    return true;
+  }
+
   /**
    * 重新生成 dirRel 及其所有祖先目录（含根）的 index.md。
-   * 内容无变化时不写盘。返回实际变更的 index.md 相对路径列表（供并入 git commit）。
+   * 返回实际变更的 index.md 相对路径列表（供并入 git commit）。
    */
   private refreshIndexChain(dirRel: string): string[] {
     const changed: string[] = [];
     let cur = dirRel;
     for (;;) {
-      const idxRel = cur ? `${cur}/${INDEX_FILE}` : INDEX_FILE;
-      const absIdx = this.safePath(idxRel);
-      if (fs.existsSync(path.dirname(absIdx))) {
-        const content = this.renderIndex(cur);
-        let prev = '';
-        try { prev = fs.readFileSync(absIdx, 'utf-8'); } catch { /* 尚不存在 */ }
-        if (content !== prev) {
-          fs.writeFileSync(absIdx, content, 'utf-8');
-          changed.push(idxRel);
-        }
+      if (this.refreshIndexAt(cur)) {
+        changed.push(cur ? `${cur}/${INDEX_FILE}` : INDEX_FILE);
       }
       if (!cur) break;
       cur = this.parentDirOf(cur);
     }
     return changed;
+  }
+
+  /**
+   * 全量对账：重建所有目录的 index.md，并把外部改动（人手扔进目录的文件、
+   * 直接编辑等）一次性 git 收编。不触碰任何文档正文。幂等。
+   */
+  async sync(): Promise<{ indexesUpdated: number; committed: boolean }> {
+    await this.ensureInit();
+
+    // 收集全部目录（含根）
+    const dirs: string[] = [''];
+    const collect = (absDir: string, rel: string) => {
+      let entries: fs.Dirent[];
+      try {
+        entries = fs.readdirSync(absDir, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      for (const entry of entries) {
+        if (EXCLUDED.has(entry.name) || entry.name.startsWith('.')) continue;
+        if (entry.isDirectory()) {
+          const rel2 = rel ? `${rel}/${entry.name}` : entry.name;
+          dirs.push(rel2);
+          collect(path.join(absDir, entry.name), rel2);
+        }
+      }
+    };
+    collect(this.wikiDir, '');
+
+    let indexesUpdated = 0;
+    for (const d of dirs) {
+      if (this.refreshIndexAt(d)) indexesUpdated++;
+    }
+
+    let committed = false;
+    try {
+      const { stdout } = await this.git('status --porcelain');
+      if (stdout.trim()) {
+        await this.gitCommit('wiki: sync');
+        committed = true;
+      }
+    } catch (e) {
+      console.warn('[WikiManager] sync git warning:', String(e).slice(0, 200));
+    }
+
+    return { indexesUpdated, committed };
   }
 
   /** 生成单个目录的纯索引内容：子目录 + 文档（标题取 H1） */
