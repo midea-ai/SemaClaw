@@ -27,12 +27,7 @@ The knowledge base is organized by topic folders, with each document as a Markdo
      ```
    - Completely uncertain → stage in `inbox/` and inform the user to categorize later
 
-3. **Search for related documents** so you can cross-link them (see "Linking Related Documents"):
-   ```
-   semaclaw wiki search "related topic"
-   ```
-
-4. **Save the document** (pipe full Markdown content via heredoc to stdin). Always provide `--type` and `--desc`:
+3. **Save the document** (pipe full Markdown content via heredoc to stdin). Always provide `--type` and `--desc`:
    ```bash
    cat <<'WIKI_EOF' | semaclaw wiki save --path "directory/filename.md" --tags "tag1,tag2" --type "note" --desc "One-line summary of what this document covers"
    # Document Title
@@ -68,18 +63,20 @@ WIKI_EOF
 
 Output JSON: `{"path": "programming/rust/async-runtime.md", "action": "created"}`
 
-## Linking Related Documents
+## Linking Related Documents (optional)
 
-Documents form a knowledge graph through standard Markdown relative links — the wiki UI resolves them and navigates in place.
+Documents can link to each other with standard Markdown relative links — the wiki UI resolves them, navigates in place, and shows backlinks on the target document.
 
-- Before saving, run `semaclaw wiki search` for related topics. If related documents exist, add a `## Related` section at the end of the new document with relative links:
+Linking is **opportunistic, not required**: add a link only when you already know of (or encountered during this task) a genuinely related document. Do NOT run extra searches just to populate a `## Related` section, and never fabricate weak links — no links is better than noisy links.
+
+When a real relation exists:
+- Link inline where the concept is mentioned: `see [ownership](./ownership.md)`, or add a `## Related` section at the end:
   ```markdown
   ## Related
 
   - [Async runtime explained](../rust/async-runtime.md) — how the scheduler works
   ```
 - Link paths are relative to the document's own location (`../rust/async-runtime.md`), or wiki-absolute starting with `/` (`/programming/rust/async-runtime.md`).
-- Also link inline where a concept is mentioned: `see [ownership](./ownership.md)`.
 - Do NOT use `[[wikilink]]` syntax — only standard Markdown links are supported.
 
 ## Organizing Existing Documents
