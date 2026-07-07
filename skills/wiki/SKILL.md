@@ -35,6 +35,7 @@ The knowledge base is organized by topic folders, with each document as a Markdo
    Document content...
    WIKI_EOF
    ```
+   The heredoc delimiter is single-quoted (`<<'WIKI_EOF'`), so the content is passed verbatim — do **NOT** add shell escapes inside it. In particular, never write `\![...](...)` for images: the backslash goes into the file literally and breaks image rendering. Write `![alt](img/x.png)` as-is.
 
 ### Document Metadata (OKF-aligned)
 
@@ -42,7 +43,7 @@ The wiki follows the Open Knowledge Format conventions: every document carries Y
 
 - `--type` (**always provide**): the concept type. Prefer one of: `note`, `paper-note`, `guide`, `runbook`, `reference`, `snippet`. Reuse types already present in the wiki before inventing a new one. **If unsure which type fits, use `note`** — broadly correct beats specific but wrong; never invent a speculative type.
 - `--desc` (**always provide**): a one-line description of the document. This is shown in the UI and used by search — write it for someone deciding whether to open the document.
-- `--resource` (optional): a URL or wiki-relative path pointing to the original/associated resource — the source article URL, an arXiv link, or a generated artifact (e.g. an HTML report saved alongside the note).
+- `--resource` (optional): a URL or wiki-relative path pointing to the original/associated resource — the source article URL, an arXiv link, or a generated artifact (e.g. an HTML report saved alongside the note). **Only use a URL you actually visited or received during this task** — never construct/guess a plausible-looking URL from memory; a fabricated link is worse than no link. Omit `--resource` when you don't have a real one.
 
 ### Example
 
