@@ -130,8 +130,15 @@ export function WikiDoc({ path, doc, loading, onBack, onLoad, onSave, onRefresh,
           components={{
             a: ({ href, children, ...rest }) => {
               const h = href ?? '';
+              if (isExternalHref(h)) {
+                return <a href={h} target="_blank" rel="noreferrer" {...rest}>{children}</a>;
+              }
+              // 页内锚点交给浏览器默认行为（只改 hash，不会离开 SPA）
+              if (!h || h.startsWith('#')) {
+                return <a href={h} {...rest}>{children}</a>;
+              }
               const stripped = h.replace(/[?#].*$/, '');
-              if (h && !isExternalHref(h) && /\.md$/i.test(stripped)) {
+              if (/\.md$/i.test(stripped)) {
                 const target = resolveWikiPath(path, h);
                 return (
                   <a
@@ -143,7 +150,7 @@ export function WikiDoc({ path, doc, loading, onBack, onLoad, onSave, onRefresh,
                   </a>
                 );
               }
-              if (h && !isExternalHref(h) && RAW_ASSET_RE.test(stripped)) {
+              if (RAW_ASSET_RE.test(stripped)) {
                 // wiki 内附件（html/图片/pdf 等）：走只读端点，新标签打开
                 return (
                   <a href={rawUrl(resolveWikiPath(path, h))} target="_blank" rel="noreferrer" {...rest}>
@@ -151,10 +158,18 @@ export function WikiDoc({ path, doc, loading, onBack, onLoad, onSave, onRefresh,
                   </a>
                 );
               }
-              if (isExternalHref(h)) {
-                return <a href={h} target="_blank" rel="noreferrer" {...rest}>{children}</a>;
-              }
-              return <a href={h} {...rest}>{children}</a>;
+              // 其余 wiki 内链接（目录/无扩展名）：打开该目录的 index.md，
+              // 绝不放行浏览器默认导航——否则会整页跳出到主应用
+              const dirIndex = resolveWikiPath(path, `${stripped.replace(/\/+$/, '')}/index.md`);
+              return (
+                <a
+                  href={h}
+                  onClick={e => { e.preventDefault(); onNavigate(dirIndex); }}
+                  {...rest}
+                >
+                  {children}
+                </a>
+              );
             },
             img: ({ src, ...rest }) => {
               const s = typeof src === 'string' ? src : '';
@@ -189,7 +204,7 @@ export function WikiDoc({ path, doc, loading, onBack, onLoad, onSave, onRefresh,
         <span className="text-gray-200">|</span>
         <span className="text-xs text-gray-400 truncate flex-1 font-mono">{path}</span>
 
-        {!editing && (
+        {!editing && !path.endsWith('index.md') && (
           <button
             onClick={handleEdit}
             className="px-3 py-1.5 text-xs bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-lg transition-colors"
