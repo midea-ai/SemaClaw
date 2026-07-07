@@ -181,6 +181,8 @@ export class AgentPool {
    * destroy(jid) 不清此 map —— 命令流程就是「destroy → 下次重建时带 sessionId」。
    */
   private pendingResume = new Map<string, string>();
+  /** destroyAll 关机中：destroy 跳过 dispatch 子 agent 的级联 stop（所有 agent 各自 destroy） */
+  private shuttingDown = false;
 
   constructor(
     private readonly sendReply: SendReply,
@@ -1381,6 +1383,10 @@ export class AgentPool {
     this.dispatchBridge?.notifyError(jid, 'Agent stopped by user');
     this.lastDispatchReplies.delete(jid);
 
+    // 取消该 agent 的未决权限/问答请求（session 即将重建，响应已无意义），
+    // 并广播 resolved 让前端把残留的请求卡片标记为已取消
+    this.permissionBridge.cancelPendingForJid(jid);
+
     // 3. 若此 agent 是 admin，取消所有 active/queued parents，并 stop 被 dispatch 的子 agent。
     //    这样：(a) dispatch state 不残留孤立的 active parent 阻塞新 dispatch；
     //          (b) 子 agent 不会在 admin 重置后继续空跑。
@@ -1438,7 +1444,10 @@ export class AgentPool {
   }
 
   /**
-   * 销毁指定群组的 Agent（注销群组 / 无活动超时 / 致命会话错误时使用）。
+   * 销毁指定群组的 Agent（注销群组 / 无活动超时 / 致命会话错误 / new_session、resume_session 会话重置时使用）。
+   * 若此 agent 是 admin，同时取消其发起的所有 dispatch parents 并 stop 被 dispatch 的
+   * 子 agent（与 stopAgent 的清理范围对齐），否则旧 parent 以 active 状态孤儿化：
+   * DispatchBridge 持续调度僵尸任务，新 dispatch 的 parent 被迫排队。
    * @param dispatchErrorReason 内部 notifyError 给该 jid 名下 dispatch 任务标记的错误原因。
    * 注意：调用方不得在 destroy 之外再单独调 notifyError——清扫会同步调度同 jid 的
    * 下一个任务，连续两次清扫会把刚调度的任务误杀（见 DispatchBridge.notifyError）。
@@ -1469,6 +1478,10 @@ export class AgentPool {
       this.eventCleanups.delete(jid);
     }
 
+    // 取消该 agent 的未决权限/问答请求（core 即将 dispose，响应已无意义），
+    // 并广播 resolved 让前端把残留的请求卡片标记为已取消
+    this.permissionBridge.cancelPendingForJid(jid);
+
     // 停止 memory 文件监听
     const binding = this.bindings.get(jid);
     if (binding) {
@@ -1487,6 +1500,14 @@ export class AgentPool {
     this.dispatchExecuting.delete(jid);
     this.dispatchWorkspaceOverrides.delete(jid);
 
+    // 若此 agent 是 admin，取消其发起的所有 active/queued dispatch parents。
+    // new_session / resume_session 等会话重置走 destroy（而非 stopAgent），
+    // 不清理会留下孤儿 active parent。非 admin 的 folder 不匹配任何 parent，天然 no-op。
+    // 返回的 childJids 在方法末尾级联 stop（子 agent 需要重建 session，不能只标 error）。
+    const dispatchChildJids = binding
+      ? (this.dispatchBridge?.cancelAdminParents(binding.folder) ?? [])
+      : [];
+
     // 清理 todos 缓存并通知前端清空该 agent 的 todos
     if (this.cachedTodos.has(jid)) {
       this.cachedTodos.delete(jid);
@@ -1495,24 +1516,37 @@ export class AgentPool {
     }
 
     const core = this.cores.get(jid);
-    if (!core) {
-      // 即使 core 不存在，也通知前端重置到 idle，防止气泡残留
-      this.agentEventSink?.notifyAgentState(jid, 'idle');
-      return;
+    if (core) {
+      this.cores.delete(jid);
+      try {
+        core.clearWorkingDir();
+        await core.dispose();
+      } catch {
+        // 清理失败不影响流程
+      }
     }
-    this.cores.delete(jid);
-    try {
-      core.clearWorkingDir();
-      await core.dispose();
-    } catch {
-      // 清理失败不影响流程
-    }
-    // 通知前端重置到 idle（session:error / destroy 后 state 不会自动推送 idle）
+    // 通知前端重置到 idle（session:error / destroy 后 state 不会自动推送 idle；
+    // core 不存在时同样推送，防止气泡残留）
     this.agentEventSink?.notifyAgentState(jid, 'idle');
+
+    // stop 因此 admin 发起 dispatch 而正在执行的子 agent（清队列 + abort + 重建 session），
+    // 中止僵尸任务执行。destroyAll 关机路径跳过：所有 agent 各自 destroy，
+    // 级联 stopAgent 会与并发的 destroy(child) 竞争重建刚被 dispose 的 session。
+    if (!this.shuttingDown) {
+      for (const childJid of new Set(dispatchChildJids)) {
+        if (childJid === jid) continue;
+        try {
+          await this.stopAgent(childJid);
+        } catch (e) {
+          console.warn(`[AgentPool] destroy(${jid}): stopAgent(${childJid}) failed:`, e);
+        }
+      }
+    }
   }
 
   /** 销毁所有 Agent（关闭时调用） */
   async destroyAll(): Promise<void> {
+    this.shuttingDown = true;
     const jids = [...this.cores.keys()];
     await Promise.all(jids.map((jid) => this.destroy(jid)));
     fs.unwatchFile(getSkillsReloadSignalPath());

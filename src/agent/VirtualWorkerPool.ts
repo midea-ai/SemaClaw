@@ -271,6 +271,10 @@ export class VirtualWorkerPool {
         try { inst.cleanupPermission(); } catch { /* ignore */ }
       }
 
+      // 取消该虚拟任务残留的未决权限/问答请求（cancel/timeout 路径下无人再响应），
+      // 通知前端把卡片标记为已取消
+      this.permissionBridge?.cancelPendingForJid(`virtual:${taskId}`);
+
       // Dispose core if not already done (error/cancel path)
       if (core) {
         try { await core.dispose(); } catch { /* ignore */ }

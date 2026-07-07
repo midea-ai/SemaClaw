@@ -39,7 +39,18 @@ export function AgentConsole({ dispatchParents, agentTodos, messages, groups, ag
   const adminState: AgentState = adminJid ? (agentStates[adminJid] ?? 'idle') : 'idle';
   const adminPaused = adminState === 'paused';
 
-  const [selectedTask, setSelectedTask] = useState<DispatchTask | null>(null);
+  // 只存 id，任务对象从 dispatchParents 实时派生：状态跟随更新，
+  // parent 离开 active/queued（完成或 reset）后详情卡自动消失，不留快照残留
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const selectedTask = useMemo<DispatchTask | null>(() => {
+    if (!selectedTaskId) return null;
+    for (const p of dispatchParents) {
+      if (p.status !== 'active' && p.status !== 'queued') continue;
+      const t = p.tasks.find(x => x.id === selectedTaskId);
+      if (t) return t;
+    }
+    return null;
+  }, [selectedTaskId, dispatchParents]);
 
   // Pending permissions from ALL agents (scan all message lists)
   const pendingPermissions = useMemo(() => {
@@ -125,7 +136,7 @@ export function AgentConsole({ dispatchParents, agentTodos, messages, groups, ag
               <div className="p-2">
                 <DispatchTree
                   parents={dispatchParents}
-                  onSelectTask={setSelectedTask}
+                  onSelectTask={t => setSelectedTaskId(t.id)}
                   selectedTaskId={selectedTask?.id}
                   adminPaused={adminPaused}
                 />
@@ -156,7 +167,7 @@ export function AgentConsole({ dispatchParents, agentTodos, messages, groups, ag
                   </div>
                   <div className="flex items-center gap-1 flex-shrink-0">
                     <span className="text-[9px] px-1.5 py-0.5 rounded font-medium bg-purple-50 text-purple-600">{selectedTask.isVirtual ? (selectedTask.personaName ?? selectedTask.agentId) : selectedTask.agentId}</span>
-                    <button onClick={() => setSelectedTask(null)} className="text-[10px] text-gray-300 hover:text-gray-500">✕</button>
+                    <button onClick={() => setSelectedTaskId(null)} className="text-[10px] text-gray-300 hover:text-gray-500">✕</button>
                   </div>
                 </div>
                 {selectedTask.dependsOn.length > 0 && (

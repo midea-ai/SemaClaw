@@ -202,6 +202,25 @@ export class PermissionBridge {
   }
 
   /**
+   * 取消指定 chatJid 的所有未决权限/问答请求（agent stop / destroy / 虚拟任务结束时调用）。
+   * 不回调 core（其 session 正在被销毁或重建，响应已无意义），
+   * 仅删除 pending 条目并广播 resolved，让各端把卡片标记为已取消——
+   * 否则前端 Permissions 面板会残留永远无人响应的请求卡片。
+   */
+  cancelPendingForJid(chatJid: string): void {
+    for (const [requestId, pending] of [...this.pendingPermissions]) {
+      if (pending.chatJid !== chatJid) continue;
+      this.pendingPermissions.delete(requestId);
+      this.onPermissionResolvedCb?.(chatJid, requestId, 'cancelled', 'Cancelled');
+    }
+    for (const [requestId, pending] of [...this.pendingAskQuestions]) {
+      if (pending.chatJid !== chatJid) continue;
+      this.pendingAskQuestions.delete(requestId);
+      this.onAskQuestionResolvedCb?.(chatJid, requestId, {});
+    }
+  }
+
+  /**
    * 将指定 SemaCore 的权限事件绑定到此 bridge。
    * AgentPool.getOrCreate() 中为每个 core 调用一次。
    * 返回清理函数，destroy 时调用以移除监听器。

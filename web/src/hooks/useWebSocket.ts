@@ -619,10 +619,13 @@ export function useWebSocket(): WsHook {
                   const op = prev.find(p => p.id === np.id);
                   const ot = op?.tasks.find(t => t.id === nt.id);
                   if (ot && !TERMINAL.includes(ot.status)) {
-                    // 这个任务刚进入终态
+                    // 这个任务刚进入终态。虚拟任务的 agentJid 为空串，
+                    // todos 以 virtual:{taskId} 为 key 推送，需按同样的 key 清理
+                    const todoKey = nt.isVirtual ? `virtual:${nt.id}` : nt.agentJid;
                     setAgentTodos(prevTodos => {
+                      if (!(todoKey in prevTodos)) return prevTodos;
                       const next = { ...prevTodos };
-                      delete next[nt.agentJid];
+                      delete next[todoKey];
                       return next;
                     });
                   }
@@ -698,6 +701,15 @@ export function useWebSocket(): WsHook {
             // 取消该 agent 上一次的延迟清除（有新 todos 写入，之前的清除计划作废）
             const prev = todosClearTimers.current.get(todoJid);
             if (prev) { clearTimeout(prev); todosClearTimers.current.delete(todoJid); }
+            // 空数组 = 服务端主动清空（agent stop/destroy）：删除 key 而非存空条目，
+            // 否则 hasTodos（按 key 数判断）永远为 true，空表头和 dock 蓝点残留
+            if (todosArr.length === 0) {
+              setAgentTodos(prev => {
+                if (!(todoJid in prev)) return prev;
+                const n = { ...prev }; delete n[todoJid]; return n;
+              });
+              break;
+            }
             setAgentTodos(prev => ({
               ...prev,
               [todoJid]: { agentName: msg.agentName as string, todos: todosArr },
