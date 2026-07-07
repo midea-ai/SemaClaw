@@ -713,7 +713,8 @@ export class WikiManager {
     if (tagsNode && typeof tagsNode === 'object') {
       (tagsNode as { flow?: boolean }).flow = true; // tags 保持 [a, b] 行内风格
     }
-    return `---\n${doc.toString({ flowCollectionPadding: false })}---\n\n${body}`;
+    // lineWidth: 0 = 不折行，保证 tags: [a, b, ...] 始终单行
+    return `---\n${doc.toString({ flowCollectionPadding: false, lineWidth: 0 })}---\n\n${body}`;
   }
 
   private extractTitle(content: string, relPath: string): string {
